@@ -1,0 +1,116 @@
+services:
+  rss-worker:
+    build: ./rss-worker
+    volumes:
+      - ./data/torrents-storage:/app/torrents-storage
+      - ./data/db:/app/db
+    environment:
+      - RSS_FEED_URL=${RSS_FEED_URL:-https://example.com/feed.xml}
+      - DB_PATH=/app/db/rss.sqlite
+    depends_on:
+      - db-init
+    restart: unless-stopped
+
+  transmission:
+    image: linuxserver/transmission:latest
+    platform: linux/amd64
+    container_name: torrent-client
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+      - USER=admin
+      - PASS=admin
+    volumes:
+      - ./data/downloading:/downloads
+      - ./data/torrents:/watch
+      - ./data/toMerge:/toMerge
+      - ./data/toTag:/toTag
+      - transmission-config:/config
+    ports:
+      - "9091:9091"
+    restart: unless-stopped
+
+  api:
+    build: ./api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/db:/app/db
+      - ./data/downloading:/app/downloading
+      - ./data/toMerge:/app/toMerge
+      - ./data/toTag:/app/toTag
+      - ./data/library:/app/library
+      - ./data/torrents-storage:/app/torrents-storage
+    environment:
+      - DB_PATH=/app/db/rss.sqlite
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-change-this}
+      - TRANSMISSION_HOST=transmission
+      - TRANSMISSION_PORT=9091
+      - TRANSMISSION_USER=admin
+      - TRANSMISSION_PASS=admin
+      - AUTO_M4B_TAGGER_URL=http://auto-m4b-tagger:8080
+    depends_on:
+      - transmission
+      - auto-m4b-tagger
+      - db-init
+    restart: unless-stopped
+
+  auto-m4b:
+    image: seanap/auto-m4b:latest
+    platform: linux/amd64
+    volumes:
+      - ./data/toMerge:/input
+      - ./data/toTag:/output
+    environment:
+      - INPUT_DIR=/input
+      - OUTPUT_DIR=/output
+    restart: unless-stopped
+
+  auto-m4b-tagger:
+    build:
+      context: https://github.com/thodon/auto-m4b-audible-tagger.git
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/toTag:/toTag
+      - ./data/library:/library
+    environment:
+      - INCOMING_PATH=/toTag
+      - SKIPPED_PATH=/toTag/skipped
+      - LIBRARY_PATH=/library
+      - SINGLE_ALBUM_ARTIST=true
+      - SINGLE_GENRE=all
+      - DELIMITER=;
+      - NARRATOR_IN_ARTIST=NO
+    restart: unless-stopped
+
+  ui:
+    build: ./ui
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  db-init:
+    build: ./db-init
+    volumes:
+      - ./data/db:/app/db
+    environment:
+      - DB_PATH=/app/db/rss.sqlite
+
+volumes:
+  transmission-config:
+
+# Create data directories
+x-data-directories: &data-directories
+  - ./data/torrents
+  - ./data/downloading
+  - ./data/toMerge
+  - ./data/toTag
+  - ./data/library
+  - ./data/db
