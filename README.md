@@ -8,7 +8,6 @@ A complete Docker Compose stack for automating RSS feed → Torrent download →
 
    ```bash
    export RSS_FEED_URL="https://example.com/feed.xml"
-   export JWT_SECRET_KEY="your-secure-secret-key-here"
    ```
 
    **Note**: The system is optimized for YggTorrent RSS feeds and will automatically parse:
@@ -26,8 +25,7 @@ A complete Docker Compose stack for automating RSS feed → Torrent download →
    ```
 
 3. **Access the UI:**
-   - Open http://localhost:3000
-   - Login with the default token (no password required)
+   - Open http://localhost:8080
 
 ## 📁 Directory Structure
 
@@ -35,7 +33,7 @@ A complete Docker Compose stack for automating RSS feed → Torrent download →
 project-root/
 ├── data/
 │   ├── torrents/        # .torrent files
-│   ├── downloading/     # active downloads
+│   ├── downloads/     # active downloads
 │   ├── toMerge/         # mp3 folders waiting for conversion
 │   ├── toTag/           # m4b files waiting for tagging
 │   ├── library/         # final tagged m4b files
@@ -50,28 +48,22 @@ project-root/
 
 - **rss-worker**: Parses RSS feed every hour, downloads torrents
 - **transmission**: Torrent client (headless)
-- **api**: FastAPI central gateway with JWT auth
+- **api**: FastAPI central gateway
 - **auto-m4b**: Converts MP3 folders to M4B files
 - **auto-m4b-tagger**: Tags M4B files with metadata
 - **ui**: React TypeScript dashboard
 
 ## 🌐 Ports
 
-- **UI**: http://localhost:3000
-- **API**: http://localhost:8000 (docs at /docs)
+- **UI**: http://localhost:8080
+- **API**: http://localhost:8081 (docs at /docs)
 - **Transmission**: http://localhost:9091 (admin/admin)
-
-## 🔑 Authentication
-
-The API uses JWT tokens. Login via the UI or POST to `/auth/token`.
 
 ## 📊 API Endpoints
 
 - `GET /rss-items` - List RSS items
 - `GET /torrents` - Active torrents
-- `GET /conversion` - Items in conversion queue
 - `GET /tagging` - Items in tagging queue
-- `POST /tagging/trigger` - Trigger tagging process
 - `GET /logs` - System logs
 
 ## 🐛 Troubleshooting
@@ -98,7 +90,6 @@ The API uses JWT tokens. Login via the UI or POST to `/auth/token`.
 Edit `docker-compose.yml` to customize:
 
 - RSS feed URL
-- JWT secret key
 - Volume paths
 - Service configurations
 

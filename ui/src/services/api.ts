@@ -1,6 +1,5 @@
 import axios from "axios";
 import {
-  ConversionItem,
   Download,
   LogEntry,
   RSSItem,
@@ -8,18 +7,26 @@ import {
   TorrentInfo,
 } from "../shared/types/api";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+export interface ConversionTracking {
+  id: number;
+  book_name: string;
+  total_files: number;
+  converted_files: number;
+  current_file: string | null;
+  status: string;
+  progress_percentage: number;
+  merge_folder_path: string | null;
+  temp_folder_path: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8081";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
+  headers: { "Content-Type": "application/json" },
 });
-
-// No authentication needed
-
-// Authentication service removed
 
 export const rssService = {
   async getRSSItems(): Promise<RSSItem[]> {
@@ -61,27 +68,69 @@ export const torrentService = {
   },
 };
 
-export const conversionService = {
-  async getConversionItems(): Promise<ConversionItem[]> {
-    const response = await api.get("/conversion");
-    return response.data;
-  },
-};
-
 export const taggingService = {
   async getTaggingItems(): Promise<TaggingItem[]> {
     const response = await api.get("/tagging");
     return response.data;
   },
 
-  async triggerTagging(): Promise<void> {
-    await api.post("/tagging/trigger");
+  async getTaggingStatus(): Promise<{
+    service: string;
+    status: string;
+    url: string;
+    error?: string;
+  }> {
+    const response = await api.get("/tagging/status");
+    return response.data;
+  },
+
+  async updateTaggingItemStatus(itemId: number, status: string): Promise<void> {
+    await api.put(`/tagging/items/${itemId}/status`, null, {
+      params: { status },
+    });
+  },
+
+  async searchAudibleBooks(
+    query: string,
+    locale: string = "com"
+  ): Promise<any[]> {
+    const response = await api.post("/tagging/search", { query, locale });
+    return response.data.results;
+  },
+
+  async tagFile(filePath: string, bookData: any): Promise<void> {
+    await api.post("/tagging/tag-file", {
+      file_path: filePath,
+      book_data: bookData,
+    });
+  },
+
+  async parseFilename(filename: string): Promise<{
+    filename: string;
+    title: string;
+    author: string;
+    suggested_query: string;
+  }> {
+    const response = await api.post("/tagging/parse-filename", { filename });
+    return response.data;
   },
 };
 
 export const logService = {
   async getLogs(): Promise<LogEntry[]> {
     const response = await api.get("/logs");
+    return response.data;
+  },
+};
+
+export const conversionService = {
+  async getConversions(): Promise<ConversionTracking[]> {
+    const response = await api.get("/conversions");
+    return response.data;
+  },
+
+  async getConversion(conversionId: number): Promise<ConversionTracking> {
+    const response = await api.get(`/conversions/${conversionId}`);
     return response.data;
   },
 };

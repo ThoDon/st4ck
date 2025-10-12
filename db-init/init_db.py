@@ -64,10 +64,46 @@ def init_database():
         )
     ''')
     
+    # Create tagging_items table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tagging_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL,
+            folder TEXT,
+            status TEXT DEFAULT 'waiting',
+            size INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Create conversion_tracking table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS conversion_tracking (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            book_name TEXT NOT NULL,
+            total_files INTEGER DEFAULT 0,
+            converted_files INTEGER DEFAULT 0,
+            current_file TEXT,
+            status TEXT DEFAULT 'pending',
+            progress_percentage REAL DEFAULT 0.0,
+            merge_folder_path TEXT,
+            temp_folder_path TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
     # Create indexes
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_rss_items_link ON rss_items(link)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_rss_items_pub_date ON rss_items(pub_date)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tagging_items_status ON tagging_items(status)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tagging_items_created_at ON tagging_items(created_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversion_tracking_status ON conversion_tracking(status)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversion_tracking_created_at ON conversion_tracking(created_at)')
     
     conn.commit()
     conn.close()

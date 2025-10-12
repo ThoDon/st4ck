@@ -1,18 +1,15 @@
-import { useQuery } from "@tanstack/react-query";
 import { Activity, AlertCircle, AlertTriangle, Info } from "lucide-react";
 import React from "react";
-import { logService } from "../services/api";
+import { useLogs } from "../hooks/useFetching";
+import PageContainer from "../components/PageContainer";
+import PageHeader from "../components/PageHeader";
+import EmptyState from "../components/EmptyState";
+import LoadingSpinner from "../components/LoadingSpinner";
+import ErrorAlert from "../components/ErrorAlert";
+import DataTable, { TableColumn } from "../components/DataTable";
 
 const Logs: React.FC = () => {
-  const {
-    data: logs,
-    isLoading,
-    error,
-  } = useQuery({
-    queryKey: ["logs"],
-    queryFn: logService.getLogs,
-    refetchInterval: 5000, // Refetch every 5 seconds
-  });
+  const { data: logs, isLoading, error } = useLogs();
 
   const getLogIcon = (level: string) => {
     switch (level.toLowerCase()) {
@@ -27,106 +24,81 @@ const Logs: React.FC = () => {
     }
   };
 
-  const getLogColor = (level: string) => {
-    switch (level.toLowerCase()) {
-      case "error":
-        return "bg-red-50 border-red-200";
-      case "warning":
-        return "bg-yellow-50 border-yellow-200";
-      case "info":
-        return "bg-blue-50 border-blue-200";
-      default:
-        return "bg-gray-50 border-gray-200";
-    }
-  };
+  // Define table columns for Logs
+  const logColumns: TableColumn[] = [
+    {
+      key: "level",
+      label: "Level",
+      render: (log) => (
+        <div className="flex items-center justify-center space-x-2">
+          {getLogIcon(log.level)}
+        </div>
+      ),
+    },
+    {
+      key: "service",
+      label: "Service",
+      render: (log) => (
+        <div>
+          {log.service && (
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200">
+              {log.service}
+            </span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "message",
+      label: "Message",
+      className: "max-w-lg truncate",
+      render: (log) => (
+        <div
+          title={log.message}
+          className="text-sm text-gray-700 dark:text-gray-300"
+        >
+          {log.message}
+        </div>
+      ),
+    },
+    {
+      key: "created_at",
+      label: "Time",
+      render: (log) => (
+        <div className="text-xs text-gray-500 dark:text-gray-400">
+          {new Date(log.created_at).toLocaleString()}
+        </div>
+      ),
+    },
+  ];
 
   if (isLoading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-indigo-500"></div>
-      </div>
-    );
+    return <LoadingSpinner />;
   }
 
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-md p-4">
-        <div className="flex">
-          <AlertCircle className="h-5 w-5 text-red-400" />
-          <div className="ml-3">
-            <h3 className="text-sm font-medium text-red-800">
-              Error loading logs
-            </h3>
-            <div className="mt-2 text-sm text-red-700">
-              {error instanceof Error ? error.message : "Unknown error"}
-            </div>
-          </div>
-        </div>
-      </div>
+      <ErrorAlert
+        title="Error loading logs"
+        message={error instanceof Error ? error.message : "Unknown error"}
+      />
     );
   }
 
   return (
-    <div className="px-4 py-6 sm:px-0">
-      <div className="border-4 border-dashed border-gray-200 rounded-lg p-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">System Logs</h2>
+    <PageContainer>
+      <PageHeader title="System Logs" />
 
-        {logs && logs.length > 0 ? (
-          <div className="space-y-3">
-            {logs.map((log) => (
-              <div
-                key={log.id}
-                className={`border rounded-lg p-4 ${getLogColor(log.level)}`}
-              >
-                <div className="flex items-start">
-                  <div className="flex-shrink-0">{getLogIcon(log.level)}</div>
-                  <div className="ml-3 flex-1">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <span
-                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            log.level.toLowerCase() === "error"
-                              ? "bg-red-100 text-red-800"
-                              : log.level.toLowerCase() === "warning"
-                              ? "bg-yellow-100 text-yellow-800"
-                              : log.level.toLowerCase() === "info"
-                              ? "bg-blue-100 text-blue-800"
-                              : "bg-gray-100 text-gray-800"
-                          }`}
-                        >
-                          {log.level.toUpperCase()}
-                        </span>
-                        {log.service && (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                            {log.service}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {new Date(log.created_at).toLocaleString()}
-                      </div>
-                    </div>
-                    <div className="mt-2 text-sm text-gray-700">
-                      {log.message}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-12">
-            <Activity className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">
-              No logs available
-            </h3>
-            <p className="mt-1 text-sm text-gray-500">
-              No log entries found in the system.
-            </p>
-          </div>
-        )}
-      </div>
-    </div>
+      {logs && logs.length > 0 ? (
+        <DataTable data={logs} columns={logColumns} />
+      ) : (
+        <EmptyState
+          icon={Activity}
+          title="No logs available"
+          description="No log entries found in the system."
+        />
+      )}
+    </PageContainer>
   );
 };
 

@@ -46,17 +46,15 @@ export interface TorrentInfo {
   progress: number;
   downloadDir: string;
 }
-
-export interface ConversionItem {
-  path: string;
-  name: string;
-  status: string;
-}
-
 export interface TaggingItem {
-  path: string;
+  id?: number;
   name: string;
+  path: string;
+  folder?: string;
   status: string;
+  size?: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface Token {

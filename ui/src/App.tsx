@@ -7,10 +7,12 @@ import {
   Routes,
 } from "react-router-dom";
 import Layout from "./components/Layout";
+import { DarkModeProvider } from "./contexts/DarkModeContext";
 import Catalog from "./pages/Catalog";
 import Conversion from "./pages/Conversion";
 import Logs from "./pages/Logs";
 import Tagging from "./pages/Tagging";
+import Torrents from "./pages/Torrents";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,8 +28,9 @@ const AppRoutes: React.FC = () => {
     <Layout>
       <Routes>
         <Route path="/" element={<Catalog />} />
-        <Route path="/conversion" element={<Conversion />} />
+        <Route path="/torrents" element={<Torrents />} />
         <Route path="/tagging" element={<Tagging />} />
+        <Route path="/conversions" element={<Conversion />} />
         <Route path="/logs" element={<Logs />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
@@ -37,11 +40,13 @@ const AppRoutes: React.FC = () => {
 
 const App: React.FC = () => {
   return (
-    <QueryClientProvider client={queryClient}>
-      <Router>
-        <AppRoutes />
-      </Router>
-    </QueryClientProvider>
+    <DarkModeProvider>
+      <QueryClientProvider client={queryClient}>
+        <Router>
+          <AppRoutes />
+        </Router>
+      </QueryClientProvider>
+    </DarkModeProvider>
   );
 };
 

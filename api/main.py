@@ -39,9 +39,7 @@ TRANSMISSION_HOST = os.getenv("TRANSMISSION_HOST", "transmission")
 TRANSMISSION_PORT = os.getenv("TRANSMISSION_PORT", "9091")
 TRANSMISSION_USER = os.getenv("TRANSMISSION_USER", "admin")
 TRANSMISSION_PASS = os.getenv("TRANSMISSION_PASS", "admin")
-AUTO_M4B_TAGGER_URL = os.getenv("AUTO_M4B_TAGGER_URL", "http://auto-m4b-tagger:8080")
-
-# Security removed
+# AUTO_M4B_TAGGER_URL removed - functionality integrated into API
 
 # Pydantic models
 class RSSItem(BaseModel):
@@ -92,11 +90,61 @@ class ConversionItem(BaseModel):
     status: str
 
 class TaggingItem(BaseModel):
-    path: str
+    id: Optional[int] = None
     name: str
+    path: str
+    folder: Optional[str] = None
     status: str
+    size: Optional[int] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
-# Authentication models and functions removed
+class TaggingItemCreate(BaseModel):
+    name: str
+    path: str
+    folder: Optional[str] = None
+    status: str = "waiting"
+    size: Optional[int] = None
+
+class AudibleSearchRequest(BaseModel):
+    query: str
+    locale: str = "com"
+
+class AudibleBookData(BaseModel):
+    asin: str
+    title: str
+    author: str
+    narrator: Optional[str] = None
+    series: Optional[str] = None
+    series_part: Optional[str] = None
+    description: Optional[str] = None
+    cover_url: Optional[str] = None
+    duration: Optional[str] = None
+    release_date: Optional[str] = None
+    language: Optional[str] = None
+    publisher: Optional[str] = None
+    locale: str = "com"
+
+class TagFileRequest(BaseModel):
+    file_path: str
+    book_data: AudibleBookData
+
+class ParseFilenameRequest(BaseModel):
+    filename: str
+
+class ConversionTracking(BaseModel):
+    id: int
+    book_name: str
+    total_files: int
+    converted_files: int
+    current_file: Optional[str]
+    status: str
+    progress_percentage: float
+    merge_folder_path: Optional[str]
+    temp_folder_path: Optional[str]
+    created_at: str
+    updated_at: str
+
 
 # Database helper
 def get_db_connection():
@@ -106,6 +154,7 @@ def get_db_connection():
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA cache_size=10000")
     conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA busy_timeout=30000")  # 30 second timeout
     return conn
 
 def log_to_db(level: str, message: str, service: str = "api"):
@@ -164,8 +213,8 @@ async def root():
             "rss_items": "/rss-items",
             "downloads": "/downloads", 
             "torrents": "/torrents",
-            "conversion": "/conversion",
             "tagging": "/tagging",
+            "conversions": "/conversions",
             "logs": "/logs",
             "health": "/health",
             "docs": "/docs",
@@ -173,7 +222,6 @@ async def root():
         }
     }
 
-# Authentication endpoint removed
 
 @app.get("/rss-items", response_model=List[RSSItem])
 async def get_rss_items():
@@ -186,7 +234,6 @@ async def get_rss_items():
             SELECT r.*, d.status as download_status, d.created_at as download_date
             FROM rss_items r
             LEFT JOIN downloads d ON r.id = d.rss_item_id
-            ORDER BY r.created_at DESC
         ''')
         items = []
         for row in cursor.fetchall():
@@ -211,6 +258,20 @@ async def get_rss_items():
                 download_date=row[16] if row[16] else None
             )
             items.append(rss_item)
+        
+        # Sort items by publication date (newer first)
+        def parse_pub_date(pub_date_str):
+            if not pub_date_str:
+                return datetime.min
+            try:
+                # All dates are stored in RFC 2822 format
+                from email.utils import parsedate_to_datetime
+                return parsedate_to_datetime(pub_date_str)
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Failed to parse pub_date '{pub_date_str}': {e}")
+                return datetime.min
+        
+        items.sort(key=lambda x: parse_pub_date(x.pub_date), reverse=True)
         conn.close()
         return items
     except Exception as e:
@@ -352,7 +413,7 @@ async def add_torrent(request: dict):
 async def get_available_torrents():
     """Get list of available torrent files that can be added to Transmission"""
     try:
-        torrents_dir = "/app/torrents-storage"
+        torrents_dir = "/app/saved-torrents-files"
         torrent_files = []
         
         if os.path.exists(torrents_dir):
@@ -373,64 +434,301 @@ async def get_available_torrents():
         log_to_db("ERROR", f"Error listing torrents: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/conversion", response_model=List[ConversionItem])
-async def get_conversion_items():
-    """Get items in toMerge directory"""
-    try:
-        to_merge_dir = "/app/toMerge"
-        items = []
-        
-        if os.path.exists(to_merge_dir):
-            for item in os.listdir(to_merge_dir):
-                item_path = os.path.join(to_merge_dir, item)
-                if os.path.isdir(item_path):
-                    items.append(ConversionItem(
-                        path=item_path,
-                        name=item,
-                        status="waiting"
-                    ))
-        
-        return items
-    except Exception as e:
-        logger.error(f"Error fetching conversion items: {e}")
-        log_to_db("ERROR", f"Error fetching conversion items: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.get("/tagging", response_model=List[TaggingItem])
 async def get_tagging_items():
-    """Get items in toTag directory"""
+    """Get tagging items from database"""
     try:
-        to_tag_dir = "/app/toTag"
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM tagging_items ORDER BY created_at DESC')
         items = []
-        
-        if os.path.exists(to_tag_dir):
-            for item in os.listdir(to_tag_dir):
-                if item.endswith('.m4b'):
-                    item_path = os.path.join(to_tag_dir, item)
-                    items.append(TaggingItem(
-                        path=item_path,
-                        name=item,
-                        status="waiting"
-                    ))
-        
+        for row in cursor.fetchall():
+            items.append(TaggingItem(
+                id=row[0],
+                name=row[1],
+                path=row[2],
+                folder=row[3],
+                status=row[4],
+                size=row[5],
+                created_at=row[6],
+                updated_at=row[7]
+            ))
+        conn.close()
         return items
     except Exception as e:
         logger.error(f"Error fetching tagging items: {e}")
         log_to_db("ERROR", f"Error fetching tagging items: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/tagging/trigger")
-async def trigger_tagging():
-    """Trigger the auto-m4b-audible-tagger"""
+@app.post("/tagging/items", response_model=TaggingItem)
+async def create_tagging_item(item: TaggingItemCreate):
+    """Create a new tagging item"""
     try:
-        # This would typically call the auto-m4b-audible-tagger API
-        # For now, we'll just log the action
-        log_to_db("INFO", "Tagging triggered manually")
-        return {"message": "Tagging process triggered"}
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Check if item already exists
+        cursor.execute(
+            'SELECT id FROM tagging_items WHERE path = ?',
+            (item.path,)
+        )
+        existing = cursor.fetchone()
+        
+        if existing:
+            # Update existing item
+            cursor.execute('''
+                UPDATE tagging_items 
+                SET name = ?, folder = ?, status = ?, size = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE path = ?
+            ''', (item.name, item.folder, item.status, item.size, item.path))
+            item_id = existing[0]
+        else:
+            # Create new item
+            cursor.execute('''
+                INSERT INTO tagging_items (name, path, folder, status, size)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (item.name, item.path, item.folder, item.status, item.size))
+            item_id = cursor.lastrowid
+        
+        conn.commit()
+        
+        # Get the created/updated item
+        cursor.execute('SELECT * FROM tagging_items WHERE id = ?', (item_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return TaggingItem(
+                id=row[0],
+                name=row[1],
+                path=row[2],
+                folder=row[3],
+                status=row[4],
+                size=row[5],
+                created_at=row[6],
+                updated_at=row[7]
+            )
+        else:
+            raise HTTPException(status_code=500, detail="Failed to create tagging item")
+            
     except Exception as e:
-        logger.error(f"Error triggering tagging: {e}")
-        log_to_db("ERROR", f"Error triggering tagging: {e}")
+        logger.error(f"Error creating tagging item: {e}")
+        log_to_db("ERROR", f"Error creating tagging item: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/tagging/items/{item_id}/status")
+async def update_tagging_item_status(item_id: int, status: str):
+    """Update tagging item status"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE tagging_items 
+            SET status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (status, item_id))
+        
+        if cursor.rowcount == 0:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Tagging item not found")
+        
+        conn.commit()
+        conn.close()
+        
+        log_to_db("INFO", f"Updated tagging item {item_id} status to {status}")
+        return {"message": f"Tagging item {item_id} status updated to {status}"}
+        
+    except Exception as e:
+        logger.error(f"Error updating tagging item status: {e}")
+        log_to_db("ERROR", f"Error updating tagging item status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/tagging/status")
+async def get_tagging_status():
+    """Get the status of the integrated tagging service"""
+    try:
+        # Check if our integrated tagging modules are available
+        try:
+            import sys
+            sys.path.append('/app/tagger')
+            from audible_client import AudibleAPIClient
+            from m4b_tagger import M4BTagger
+            
+            return {
+                "service": "integrated-tagger",
+                "status": "healthy",
+                "features": ["audible-search", "m4b-tagging", "cover-download"]
+            }
+        except ImportError as e:
+            return {
+                "service": "integrated-tagger",
+                "status": "unhealthy",
+                "error": f"Missing modules: {str(e)}"
+            }
+            
+    except Exception as e:
+        logger.error(f"Error checking tagging status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tagging/search")
+async def search_audible_books(request: AudibleSearchRequest):
+    """Search Audible for books matching the query"""
+    try:
+        # Import the AudibleAPIClient
+        import sys
+        sys.path.insert(0, '/app')
+        from tagger.audible_client import AudibleAPIClient
+        
+        client = AudibleAPIClient()
+        
+        # First try the main search
+        results = client.search_audible(request.query, request.locale)
+        
+        # If no results, try alternative strategies
+        if not results:
+            results = client.handle_no_search_results(request.query, request.locale)
+        
+        log_to_db("INFO", f"Audible search performed: '{request.query}' - {len(results)} results")
+        return {"results": results}
+        
+    except Exception as e:
+        logger.error(f"Error searching Audible: {e}")
+        log_to_db("ERROR", f"Error searching Audible: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tagging/parse-filename")
+async def parse_filename_for_search(request: ParseFilenameRequest):
+    """Parse filename to extract title and author for search"""
+    try:
+        # Import the AudibleAPIClient
+        import sys
+        sys.path.insert(0, '/app')
+        from tagger.audible_client import AudibleAPIClient
+        
+        client = AudibleAPIClient()
+        title, author = client.parse_filename(request.filename)
+        
+        # Build search query similar to original implementation
+        if author == "Unknown Author":
+            search_query = title.strip()
+        else:
+            search_query = f"{title} {author}".strip()
+            # Remove common words that might interfere with search
+            import re
+            search_query = re.sub(
+                r'\b(by|the|and|or|in|on|at|to|for|of|with|from)\b',
+                '',
+                search_query,
+                flags=re.IGNORECASE
+            )
+            # Clean up extra whitespace
+            search_query = re.sub(r'\s+', ' ', search_query).strip()
+        
+        return {
+            "filename": request.filename,
+            "title": title,
+            "author": author,
+            "suggested_query": search_query
+        }
+        
+    except Exception as e:
+        logger.error(f"Error parsing filename: {e}")
+        log_to_db("ERROR", f"Error parsing filename: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tagging/tag-file")
+async def tag_file_with_metadata(request: TagFileRequest):
+    """Tag a file with selected book metadata"""
+    try:
+        logger.info(f"Starting tag-file request for: {request.file_path}")
+        logger.info(f"Book data: {request.book_data}")
+        
+        # Import the M4BTagger
+        import sys
+        import os
+        sys.path.insert(0, '/app')
+        logger.info("Importing tagger modules...")
+        from tagger.m4b_tagger import M4BTagger
+        from tagger.audible_client import AudibleAPIClient
+        from pathlib import Path
+        logger.info("Tagger modules imported successfully")
+        
+        file_path = Path(request.file_path)
+        logger.info(f"Checking file path: {file_path}")
+        if not file_path.exists():
+            logger.error(f"File not found: {file_path}")
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Create directories
+        library_dir = Path("/app/library")
+        covers_dir = Path("/app/covers")
+        logger.info(f"Library dir: {library_dir}, Covers dir: {covers_dir}")
+        
+        # Initialize tagger
+        logger.info("Initializing M4BTagger...")
+        tagger = M4BTagger(library_dir, covers_dir)
+        logger.info("M4BTagger initialized successfully")
+        
+        # Download cover if available
+        cover_path = None
+        if request.book_data.cover_url:
+            logger.info(f"Downloading cover from: {request.book_data.cover_url}")
+            client = AudibleAPIClient()
+            cover_path = client.download_cover(
+                request.book_data.cover_url,
+                request.book_data.asin,
+                covers_dir
+            )
+            logger.info(f"Cover downloaded to: {cover_path}")
+        else:
+            logger.info("No cover URL provided")
+        
+        # Convert Pydantic model to dict
+        book_data = request.book_data.dict()
+        logger.info(f"Book data converted to dict: {book_data}")
+        
+        # Tag the file
+        logger.info("Starting file tagging...")
+        if tagger.tag_file(file_path, book_data, cover_path):
+            # Move to library
+            dest_path = tagger.move_to_library(file_path, book_data, cover_path)
+            
+            if dest_path:
+                # Update database status
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE tagging_items 
+                    SET status = 'completed', updated_at = CURRENT_TIMESTAMP
+                    WHERE path = ?
+                ''', (str(file_path),))
+                conn.commit()
+                conn.close()
+                
+                log_to_db("INFO", f"Successfully tagged and moved file: {file_path.name}")
+                return {
+                    "message": "File tagged and moved successfully",
+                    "destination": str(dest_path)
+                }
+            else:
+                raise HTTPException(status_code=500, detail="Failed to move file to library")
+        else:
+            raise HTTPException(status_code=500, detail="Failed to tag file")
+            
+    except HTTPException:
+        # Re-raise HTTPExceptions (like 404 File not found) without modification
+        raise
+    except Exception as e:
+        import traceback
+        error_msg = str(e) if str(e) else "Unknown error occurred"
+        error_traceback = traceback.format_exc()
+        
+        logger.error(f"Error tagging file: {error_msg}")
+        logger.error(f"Full traceback: {error_traceback}")
+        log_to_db("ERROR", f"Error tagging file: {error_msg}")
+        
+        raise HTTPException(status_code=500, detail=error_msg)
 
 @app.get("/logs", response_model=List[LogEntry])
 async def get_logs():
@@ -453,6 +751,83 @@ async def get_logs():
     except Exception as e:
         logger.error(f"Error fetching logs: {e}")
         log_to_db("ERROR", f"Error fetching logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ExternalLogRequest(BaseModel):
+    level: str
+    message: str
+    service: Optional[str] = "external"
+
+@app.post("/logs/external")
+async def log_external(request: ExternalLogRequest):
+    """Log a message from external services"""
+    try:
+        log_to_db(request.level, request.message, request.service)
+        return {"message": "Log entry created successfully"}
+    except Exception as e:
+        logger.error(f"Error logging external message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/conversions", response_model=List[ConversionTracking])
+async def get_conversions():
+    """Get all conversion tracking records"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM conversion_tracking ORDER BY created_at DESC')
+        conversions = []
+        for row in cursor.fetchall():
+            conversions.append(ConversionTracking(
+                id=row[0],
+                book_name=row[1],
+                total_files=row[2],
+                converted_files=row[3],
+                current_file=row[4],
+                status=row[5],
+                progress_percentage=row[6],
+                merge_folder_path=row[7],
+                temp_folder_path=row[8],
+                created_at=row[9],
+                updated_at=row[10]
+            ))
+        conn.close()
+        return conversions
+    except Exception as e:
+        logger.error(f"Error fetching conversions: {e}")
+        log_to_db("ERROR", f"Error fetching conversions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/conversions/{conversion_id}", response_model=ConversionTracking)
+async def get_conversion(conversion_id: int):
+    """Get a specific conversion tracking record"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM conversion_tracking WHERE id = ?', (conversion_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Conversion tracking record not found")
+        
+        return ConversionTracking(
+            id=row[0],
+            book_name=row[1],
+            total_files=row[2],
+            converted_files=row[3],
+            current_file=row[4],
+            status=row[5],
+            progress_percentage=row[6],
+            merge_folder_path=row[7],
+            temp_folder_path=row[8],
+            created_at=row[9],
+            updated_at=row[10]
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching conversion: {e}")
+        log_to_db("ERROR", f"Error fetching conversion: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")

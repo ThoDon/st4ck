@@ -2,115 +2,189 @@ services:
   rss-worker:
     build: ./rss-worker
     volumes:
-      - ./data/torrents-storage:/app/torrents-storage
-      - ./data/db:/app/db
+      - ${DATA_DIR:-./data}/saved-torrents-files:/app/saved-torrents-files
+      - ${DATA_DIR:-./data}/db:/app/db
     environment:
       - RSS_FEED_URL=${RSS_FEED_URL:-https://example.com/feed.xml}
       - DB_PATH=/app/db/rss.sqlite
     depends_on:
       - db-init
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "worker.py"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   transmission:
     image: linuxserver/transmission:latest
     platform: linux/amd64
     container_name: torrent-client
     environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=UTC
-      - USER=admin
-      - PASS=admin
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+      - USER=${TRANSMISSION_USER:-admin}
+      - PASS=${TRANSMISSION_PASS:-admin}
     volumes:
-      - ./data/downloading:/downloads
-      - ./data/torrents:/watch
-      - ./data/toMerge:/toMerge
-      - ./data/toTag:/toTag
+      - ${DATA_DIR:-./data}/downloads:/downloads
+      - ${DATA_DIR:-./data}/drop-torrents:/watch
       - transmission-config:/config
     ports:
       - "9091:9091"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/transmission/web/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
+  mover:
+    build: ./mover
+    container_name: mover
+    volumes:
+      - ${DATA_DIR:-./data}/downloads:/downloads
+      - ${DATA_DIR:-./data}/auto-m4b/temp/recentlyadded:/toMerge
+      - ${DATA_DIR:-./data}/auto-m4b/temp/untagged:/untagged
+      - ${DATA_DIR:-./data}/toTag:/toTag
+    depends_on:
+      - api
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "mover.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  tagger:
+    build: ./tagger
+    container_name: tagger
+    volumes:
+      - ${DATA_DIR:-./data}/toTag:/toTag
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "tagger.py"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+  
   api:
     build: ./api
     ports:
-      - "8000:8000"
+      - "8081:8000"
     volumes:
-      - ./data/db:/app/db
-      - ./data/downloading:/app/downloading
-      - ./data/toMerge:/app/toMerge
-      - ./data/toTag:/app/toTag
-      - ./data/library:/app/library
-      - ./data/torrents-storage:/app/torrents-storage
+      - ${DATA_DIR:-./data}/db:/app/db
+      - ${DATA_DIR:-./data}/downloads:/app/downloads
+      - ${DATA_DIR:-./data}/auto-m4b/temp:/app/auto-m4b/temp
+      - ${DATA_DIR:-./data}/library:/app/library
+      - ${DATA_DIR:-./data}/saved-torrents-files:/app/saved-torrents-files
+      - ${DATA_DIR:-./data}/toTag:/app/toTag
+      - ./tagger:/app/tagger
+      - ${DATA_DIR:-./data}/covers:/app/covers
     environment:
       - DB_PATH=/app/db/rss.sqlite
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-change-this}
       - TRANSMISSION_HOST=transmission
       - TRANSMISSION_PORT=9091
       - TRANSMISSION_USER=admin
       - TRANSMISSION_PASS=admin
-      - AUTO_M4B_TAGGER_URL=http://auto-m4b-tagger:8080
     depends_on:
       - transmission
-      - auto-m4b-tagger
       - db-init
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   auto-m4b:
     image: seanap/auto-m4b:latest
     platform: linux/amd64
     volumes:
-      - ./data/toMerge:/input
-      - ./data/toTag:/output
+      - ${DATA_DIR:-./data}/auto-m4b/config:/config
+      - ${DATA_DIR:-./data}/auto-m4b/temp:/temp
     environment:
-      - INPUT_DIR=/input
-      - OUTPUT_DIR=/output
+      - CPU_CORES=${CPU_CORES:-2}
+      - SLEEPTIME=${SLEEPTIME:-1m}
+      - MAKE_BACKUP=${MAKE_BACKUP:-N}
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ps", "aux", "|", "grep", "-v", "grep", "|", "grep", "auto-m4b"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
-  auto-m4b-tagger:
-    build:
-      context: https://github.com/thodon/auto-m4b-audible-tagger.git
-      dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
+  conversion-watcher:
+    build: ./conversion-watcher
+    container_name: conversion-watcher
     volumes:
-      - ./data/toTag:/toTag
-      - ./data/library:/library
+      - ${DATA_DIR:-./data}/db:/app/db
+      - ${DATA_DIR:-./data}/auto-m4b/temp:/app/auto-m4b/temp
     environment:
-      - INCOMING_PATH=/toTag
-      - SKIPPED_PATH=/toTag/skipped
-      - LIBRARY_PATH=/library
-      - SINGLE_ALBUM_ARTIST=true
-      - SINGLE_GENRE=all
-      - DELIMITER=;
-      - NARRATOR_IN_ARTIST=NO
+      - DB_PATH=/app/db/rss.sqlite
+      - API_URL=http://api:8000
+      - AUTO_M4B_TEMP_PATH=/app/auto-m4b/temp
+    depends_on:
+      - api
+      - db-init
     restart: unless-stopped
-
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "watcher.py"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
   ui:
     build: ./ui
     ports:
-      - "3000:3000"
+      - "8080:3000"
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8081}
     depends_on:
       - api
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   db-init:
     build: ./db-init
     volumes:
-      - ./data/db:/app/db
+      - ${DATA_DIR:-./data}/db:/app/db
     environment:
       - DB_PATH=/app/db/rss.sqlite
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "test", "-f", "/app/db/rss.sqlite"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   transmission-config:
 
-# Create data directories
 x-data-directories: &data-directories
-  - ./data/torrents
-  - ./data/downloading
-  - ./data/toMerge
-  - ./data/toTag
-  - ./data/library
-  - ./data/db
+  - ${DATA_DIR:-./data}/drop-torrents
+  - ${DATA_DIR:-./data}/downloads
+  - ${DATA_DIR:-./data}/saved-torrents-files
+  - ${DATA_DIR:-./data}/auto-m4b/temp/recentlyadded
+  - ${DATA_DIR:-./data}/auto-m4b/temp/untagged
+  - ${DATA_DIR:-./data}/auto-m4b/temp/merge
+  - ${DATA_DIR:-./data}/toTag
+  - ${DATA_DIR:-./data}/library
+  - ${DATA_DIR:-./data}/db

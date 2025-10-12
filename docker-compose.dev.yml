@@ -1,0 +1,9 @@
+# Development override for docker-compose
+# This file excludes the UI service to allow running frontend in dev mode
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+services:
+  ui:
+    # Override UI service to not start in dev mode
+    profiles:
+      - production

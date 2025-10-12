@@ -5,10 +5,8 @@ import os
 import sys
 import logging
 import requests
-from datetime import datetime
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-import urllib.parse
 
 # Configure logging
 logging.basicConfig(
@@ -24,7 +22,7 @@ class RSSWorker:
     def __init__(self):
         self.rss_url = os.getenv('RSS_FEED_URL', 'https://example.com/feed.xml')
         self.db_path = os.getenv('DB_PATH', '/app/db/rss.sqlite')
-        self.torrents_dir = '/app/torrents-storage'
+        self.torrents_dir = '/app/saved-torrents-files'
         
         # Ensure directories exist
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -40,11 +38,12 @@ class RSSWorker:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA cache_size=10000")
         conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA busy_timeout=30000")  # 30 second timeout
         return conn
 
     def log_to_db(self, level, message):
         """Log message to database with retry logic"""
-        max_retries = 3
+        max_retries = 5
         for attempt in range(max_retries):
             conn = None
             try:
@@ -57,10 +56,13 @@ class RSSWorker:
                 conn.commit()
                 return  # Success, exit the retry loop
             except sqlite3.OperationalError as e:
-                if "database is locked" in str(e) and attempt < max_retries - 1:
-                    # Wait a bit and retry
+                error_msg = str(e).lower()
+                if ("database is locked" in error_msg or "locking protocol" in error_msg) and attempt < max_retries - 1:
+                    # Wait a bit and retry with exponential backoff
                     import time
-                    time.sleep(0.1 * (attempt + 1))  # Exponential backoff
+                    wait_time = 0.5 * (2 ** attempt)  # Exponential backoff: 0.5, 1, 2, 4 seconds
+                    logger.warning(f"Database locked, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
                     continue
                 else:
                     logger.error(f"Failed to log to database after {attempt + 1} attempts: {e}")
@@ -154,135 +156,145 @@ class RSSWorker:
 
     def process_rss_feed(self):
         """Process RSS feed and download new torrents"""
-        conn = None
-        log_messages = []  # Collect log messages to write after main transaction
-        
-        try:
-            logger.info(f"Processing RSS feed: {self.rss_url}")
-            log_messages.append(('INFO', f"Processing RSS feed: {self.rss_url}"))
-            
-            # Parse RSS feed
-            feed = feedparser.parse(self.rss_url)
-            
-            if feed.bozo:
-                logger.warning(f"RSS feed parsing warning: {feed.bozo_exception}")
-                log_messages.append(('WARNING', f"RSS feed parsing warning: {feed.bozo_exception}"))
-            
-            # Use a single connection for the entire operation
-            conn = self.get_db_connection()
-            cursor = conn.cursor()
-            
-            # Write initial log message to database
-            cursor.execute(
-                'INSERT INTO logs (level, message, service) VALUES (?, ?, ?)',
-                ('INFO', f"Processing RSS feed: {self.rss_url}", 'rss-worker')
-            )
-            
-            new_items = 0
-            # Process entries in reverse order so newest items get higher IDs
-            for entry in reversed(feed.entries):
-                # Check if item already exists
-                cursor.execute('SELECT id FROM rss_items WHERE link = ?', (entry.link,))
-                if cursor.fetchone():
-                    continue
+        max_retries = 3
+        for attempt in range(max_retries):
+            conn = None
+            try:
+                logger.info(f"Processing RSS feed: {self.rss_url} (attempt {attempt + 1}/{max_retries})")
                 
-                # Parse structured data from YggTorrent entry
-                parsed_data = self.parse_yggtorrent_entry(entry)
+                # Parse RSS feed
+                feed = feedparser.parse(self.rss_url)
+                
+                if feed.bozo:
+                    logger.warning(f"RSS feed parsing warning: {feed.bozo_exception}")
+                
+                # Use a single connection for the entire operation
+                conn = self.get_db_connection()
+                cursor = conn.cursor()
+                
+                # Write initial log message to database
+                cursor.execute(
+                    'INSERT INTO logs (level, message, service) VALUES (?, ?, ?)',
+                    ('INFO', f"Processing RSS feed: {self.rss_url}", 'rss-worker')
+                )
             
-                # Insert new RSS item with all parsed data
-                pub_date = entry.get('published', '')
-                cursor.execute('''
-                    INSERT INTO rss_items 
-                    (title, link, pub_date, description, author, year, format, 
-                     file_size, seeders, leechers, status) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    parsed_data['title'], 
-                    entry.link, 
-                    pub_date,
-                    parsed_data['description'],
-                    parsed_data['author'],
-                    parsed_data['year'],
-                    parsed_data['format'],
-                    parsed_data['file_size'],
-                    parsed_data['seeders'],
-                    parsed_data['leechers'],
-                    'new'
-                ))
-                rss_item_id = cursor.lastrowid
-            
-                # Look for torrent links in the entry
-                torrent_url = None
-                if hasattr(entry, 'enclosures'):
-                    for enclosure in entry.enclosures:
-                        if enclosure.type == 'application/x-bittorrent':
-                            torrent_url = enclosure.href
-                            break
+                new_items = 0
+                # Process entries in reverse order so newest items get higher IDs
+                for entry in reversed(feed.entries):
+                    # Check if item already exists
+                    cursor.execute('SELECT id FROM rss_items WHERE link = ?', (entry.link,))
+                    if cursor.fetchone():
+                        continue
                 
-                # Also check for torrent links in content
-                if not torrent_url and hasattr(entry, 'content'):
-                    for content in entry.content:
-                        if '.torrent' in content.value:
-                            # Extract torrent URL from content
-                            import re
-                            torrent_match = re.search(r'https?://[^\s]+\.torrent', content.value)
-                            if torrent_match:
-                                torrent_url = torrent_match.group(0)
-                                break
+                    # Parse structured data from YggTorrent entry
+                    parsed_data = self.parse_yggtorrent_entry(entry)
                 
-                # For YggTorrent, the torrent URL is typically in the link
-                if not torrent_url and 'yggtorrent' in entry.link:
-                    # Construct torrent download URL from the page link
-                    torrent_url = entry.link.replace('/torrent/', '/torrent/download/')
-                
-                if torrent_url:
-                    # Update the torrent_url in the database
-                    cursor.execute(
-                        'UPDATE rss_items SET torrent_url = ? WHERE id = ?',
-                        (torrent_url, rss_item_id)
-                    )
+                    # Insert new RSS item with all parsed data
+                    pub_date = entry.get('published', '')
                     
-                    # Download torrent file
-                    torrent_path = self.download_torrent(torrent_url, parsed_data['title'])
-                    if torrent_path:
-                        # Create download record
+                    # Keep the original RFC 2822 format from the RSS feed
+                    if not pub_date:
+                        # If no pub_date, use current timestamp in RFC 2822 format
+                        from email.utils import formatdate
+                        pub_date = formatdate()
+                    
+                    cursor.execute('''
+                        INSERT INTO rss_items 
+                        (title, link, pub_date, description, author, year, format, 
+                         file_size, seeders, leechers, status) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        parsed_data['title'], 
+                        entry.link, 
+                        pub_date,
+                        parsed_data['description'],
+                        parsed_data['author'],
+                        parsed_data['year'],
+                        parsed_data['format'],
+                        parsed_data['file_size'],
+                        parsed_data['seeders'],
+                        parsed_data['leechers'],
+                        'new'
+                    ))
+                    rss_item_id = cursor.lastrowid
+                
+                    # Look for torrent links in the entry
+                    torrent_url = None
+                    if hasattr(entry, 'enclosures'):
+                        for enclosure in entry.enclosures:
+                            if enclosure.type == 'application/x-bittorrent':
+                                torrent_url = enclosure.href
+                                break
+                    
+                    # Also check for torrent links in content
+                    if not torrent_url and hasattr(entry, 'content'):
+                        for content in entry.content:
+                            if '.torrent' in content.value:
+                                # Extract torrent URL from content
+                                import re
+                                torrent_match = re.search(r'https?://[^\s]+\.torrent', content.value)
+                                if torrent_match:
+                                    torrent_url = torrent_match.group(0)
+                                    break
+                    
+                    # For YggTorrent, the torrent URL is typically in the link
+                    if not torrent_url and 'yggtorrent' in entry.link:
+                        # Construct torrent download URL from the page link
+                        torrent_url = entry.link.replace('/torrent/', '/torrent/download/')
+                    
+                    if torrent_url:
+                        # Update the torrent_url in the database
                         cursor.execute(
-                            'INSERT INTO downloads (rss_item_id, status, torrent_file) VALUES (?, ?, ?)',
-                            (rss_item_id, 'downloaded', torrent_path)
+                            'UPDATE rss_items SET torrent_url = ? WHERE id = ?',
+                            (torrent_url, rss_item_id)
                         )
-                        logger.info(f"Added new item: {parsed_data['title']} by {parsed_data['author']}")
-                        new_items += 1
+                        
+                        # Download torrent file
+                        torrent_path = self.download_torrent(torrent_url, parsed_data['title'])
+                        if torrent_path:
+                            # Create download record
+                            cursor.execute(
+                                'INSERT INTO downloads (rss_item_id, status, torrent_file) VALUES (?, ?, ?)',
+                                (rss_item_id, 'downloaded', torrent_path)
+                            )
+                            logger.info(f"Added new item: {parsed_data['title']} by {parsed_data['author']}")
+                            new_items += 1
+                    else:
+                        logger.warning(f"No torrent found for: {parsed_data['title']}")
+                
+                # Write final log message to database
+                cursor.execute(
+                    'INSERT INTO logs (level, message, service) VALUES (?, ?, ?)',
+                    ('INFO', f"RSS processing complete. New items: {new_items}", 'rss-worker')
+                )
+                
+                conn.commit()
+                logger.info(f"RSS processing complete. New items: {new_items}")
+                return  # Success, exit retry loop
+                
+            except sqlite3.OperationalError as e:
+                error_msg = str(e).lower()
+                if ("database is locked" in error_msg or "locking protocol" in error_msg) and attempt < max_retries - 1:
+                    # Wait and retry
+                    import time
+                    wait_time = 1.0 * (2 ** attempt)  # Exponential backoff: 1, 2, 4 seconds
+                    logger.warning(f"Database locked during RSS processing, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
                 else:
-                    logger.warning(f"No torrent found for: {parsed_data['title']}")
-                    log_messages.append(('WARNING', f"No torrent found for: {parsed_data['title']}"))
-        
-            # Write final log message to database
-            cursor.execute(
-                'INSERT INTO logs (level, message, service) VALUES (?, ?, ?)',
-                ('INFO', f"RSS processing complete. New items: {new_items}", 'rss-worker')
-            )
-            
-            conn.commit()
-            logger.info(f"RSS processing complete. New items: {new_items}")
-            
-        except Exception as e:
-            logger.error(f"Error processing RSS feed: {e}")
-            if conn:
-                try:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        'INSERT INTO logs (level, message, service) VALUES (?, ?, ?)',
-                        ('ERROR', f"Error processing RSS feed: {e}", 'rss-worker')
-                    )
-                    conn.commit()
-                except:
-                    pass
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except:
-                    pass
+                    logger.error(f"Database error processing RSS feed after {attempt + 1} attempts: {e}")
+                    self.log_to_db('ERROR', f"Database error processing RSS feed: {e}")
+                    break
+            except Exception as e:
+                logger.error(f"Error processing RSS feed: {e}")
+                self.log_to_db('ERROR', f"Error processing RSS feed: {e}")
+                break
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
     
     def start(self):
         """Start the RSS worker scheduler"""
