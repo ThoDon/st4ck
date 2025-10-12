@@ -87,6 +87,46 @@ project-root/
 
 ## ⚙️ Configuration
 
+### Custom Data Directories
+
+By default, all data is stored in the `./data` directory. You can customize this using environment variables. **Directories are created automatically** when you use custom paths - no manual setup required!
+
+**Option 1: Using environment variables**
+
+```bash
+export DATA_DIR="/path/to/your/data"
+export LIBRARY_DIR="/path/to/your/library"  # Optional: separate library location
+docker-compose up -d
+```
+
+**Option 2: Using .env file**
+
+```bash
+echo "DATA_DIR=/path/to/your/data" >> .env
+echo "LIBRARY_DIR=/path/to/your/library" >> .env
+docker-compose up -d
+```
+
+**Option 3: For Portainer or other deployments (AUTOMATIC)**
+
+Simply deploy your stack with the environment variables set - directories will be created automatically:
+
+```bash
+# In Portainer, set these environment variables:
+DATA_DIR=/path/to/your/data
+LIBRARY_DIR=/path/to/your/library
+```
+
+**Option 4: Manual directory creation (if needed)**
+
+If you prefer to create directories manually:
+
+```bash
+DATA_DIR="/path/to/your/data" LIBRARY_DIR="/path/to/your/library" ./create-directories.sh
+```
+
+### Other Configuration
+
 Edit `docker-compose.yml` to customize:
 
 - RSS feed URL

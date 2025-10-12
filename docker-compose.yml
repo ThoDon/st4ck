@@ -1,4 +1,15 @@
 services:
+  dir-init:
+    build: ./dir-init
+    container_name: dir-init
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+      - ${LIBRARY_DIR:-./data}:/library
+    environment:
+      - DATA_DIR=/data
+      - LIBRARY_DIR=/library
+    restart: "no"
+
   rss-worker:
     build: ./rss-worker
     volumes:
@@ -8,6 +19,7 @@ services:
       - RSS_FEED_URL=${RSS_FEED_URL:-https://example.com/feed.xml}
       - DB_PATH=/app/db/rss.sqlite
     depends_on:
+      - dir-init
       - db-init
     restart: unless-stopped
     healthcheck:
@@ -33,6 +45,8 @@ services:
       - transmission-config:/config
     ports:
       - "9091:9091"
+    depends_on:
+      - dir-init
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/transmission/web/"]
@@ -50,6 +64,7 @@ services:
       - ${DATA_DIR:-./data}/auto-m4b/temp/untagged:/untagged
       - ${DATA_DIR:-./data}/toTag:/toTag
     depends_on:
+      - dir-init
       - api
     restart: unless-stopped
     healthcheck:
@@ -65,8 +80,8 @@ services:
     volumes:
       - ${DATA_DIR:-./data}/toTag:/toTag
     depends_on:
-      api:
-        condition: service_healthy
+      - dir-init
+      - api
     restart: unless-stopped
     networks:
       - default
@@ -97,6 +112,7 @@ services:
       - TRANSMISSION_USER=admin
       - TRANSMISSION_PASS=admin
     depends_on:
+      - dir-init
       - transmission
       - db-init
     restart: unless-stopped
@@ -117,6 +133,8 @@ services:
       - CPU_CORES=${CPU_CORES:-2}
       - SLEEPTIME=${SLEEPTIME:-1m}
       - MAKE_BACKUP=${MAKE_BACKUP:-N}
+    depends_on:
+      - dir-init
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "ps", "aux", "|", "grep", "-v", "grep", "|", "grep", "auto-m4b"]
@@ -136,6 +154,7 @@ services:
       - API_URL=http://api:8000
       - AUTO_M4B_TEMP_PATH=/app/auto-m4b/temp
     depends_on:
+      - dir-init
       - api
       - db-init
     restart: unless-stopped
@@ -167,6 +186,8 @@ services:
       - ${DATA_DIR:-./data}/db:/app/db
     environment:
       - DB_PATH=/app/db/rss.sqlite
+    depends_on:
+      - dir-init
     restart: "no"
     healthcheck:
       test: ["CMD", "test", "-f", "/app/db/rss.sqlite"]

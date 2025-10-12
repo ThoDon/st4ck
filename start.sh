@@ -45,23 +45,30 @@ EOF
 create_directories() {
     echo "📁 Ensuring required directories exist..."
     
+    # Get data directory from environment or use default
+    DATA_DIR=${DATA_DIR:-./data}
+    LIBRARY_DIR=${LIBRARY_DIR:-./data}
+    
+    echo "   Using DATA_DIR: $DATA_DIR"
+    echo "   Using LIBRARY_DIR: $LIBRARY_DIR"
+    
     # Create main data directories
-    mkdir -p data/db
-    mkdir -p data/downloads
-    mkdir -p data/library
-    mkdir -p data/covers
-    mkdir -p data/toTag
-    mkdir -p data/drop-torrents
-    mkdir -p data/saved-torrents-files
+    mkdir -p "$DATA_DIR/db"
+    mkdir -p "$DATA_DIR/downloads"
+    mkdir -p "$LIBRARY_DIR/library"
+    mkdir -p "$DATA_DIR/covers"
+    mkdir -p "$DATA_DIR/toTag"
+    mkdir -p "$DATA_DIR/drop-torrents"
+    mkdir -p "$DATA_DIR/saved-torrents-files"
     
     # Create auto-m4b directories
-    mkdir -p data/auto-m4b/config
-    mkdir -p data/auto-m4b/temp/recentlyadded
-    mkdir -p data/auto-m4b/temp/untagged
-    mkdir -p data/auto-m4b/temp/merge
-    mkdir -p data/auto-m4b/temp/backup
-    mkdir -p data/auto-m4b/temp/delete
-    mkdir -p data/auto-m4b/temp/fix
+    mkdir -p "$DATA_DIR/auto-m4b/config"
+    mkdir -p "$DATA_DIR/auto-m4b/temp/recentlyadded"
+    mkdir -p "$DATA_DIR/auto-m4b/temp/untagged"
+    mkdir -p "$DATA_DIR/auto-m4b/temp/merge"
+    mkdir -p "$DATA_DIR/auto-m4b/temp/backup"
+    mkdir -p "$DATA_DIR/auto-m4b/temp/delete"
+    mkdir -p "$DATA_DIR/auto-m4b/temp/fix"
     
     echo "✅ All required directories created."
 }
@@ -95,9 +102,16 @@ if [ "$CLEAN_MODE" = true ]; then
     echo "🛑 Stopping all containers..."
     docker-compose down
     
+    # Get data directory from environment or use default
+    DATA_DIR=${DATA_DIR:-./data}
+    LIBRARY_DIR=${LIBRARY_DIR:-./data}
+    
     # Remove all data directories and files
     echo "🗑️  Removing data directories..."
-    rm -rf data/
+    echo "   Removing: $DATA_DIR"
+    echo "   Removing: $LIBRARY_DIR"
+    rm -rf "$DATA_DIR/"
+    rm -rf "$LIBRARY_DIR/"
     
     # Remove any Docker volumes (optional, more thorough cleanup)
     echo "🗑️  Removing Docker volumes..."
