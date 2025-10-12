@@ -85,7 +85,7 @@ services:
       - ${DATA_DIR:-./data}/db:/app/db
       - ${DATA_DIR:-./data}/downloads:/app/downloads
       - ${DATA_DIR:-./data}/auto-m4b/temp:/app/auto-m4b/temp
-      - ${DATA_DIR:-./data}/library:/app/library
+      - ${LIBRARY_DIR:-./data}/library:/app/library
       - ${DATA_DIR:-./data}/saved-torrents-files:/app/saved-torrents-files
       - ${DATA_DIR:-./data}/toTag:/app/toTag
       - ./tagger:/app/tagger
@@ -186,5 +186,5 @@ x-data-directories: &data-directories
   - ${DATA_DIR:-./data}/auto-m4b/temp/untagged
   - ${DATA_DIR:-./data}/auto-m4b/temp/merge
   - ${DATA_DIR:-./data}/toTag
-  - ${DATA_DIR:-./data}/library
+  - ${LIBRARY_DIR:-./data}/library
   - ${DATA_DIR:-./data}/db
