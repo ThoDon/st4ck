@@ -93,7 +93,9 @@ services:
       start_period: 30s
   
   api:
-    build: ./api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     ports:
       - "8081:8000"
     volumes:
@@ -104,7 +106,6 @@ services:
       - ${DATA_DIR:-./data}/saved-torrents-files:/app/saved-torrents-files
       - ${DATA_DIR:-./data}/toTag:/app/toTag
       - ${DATA_DIR:-./data}/covers:/app/covers
-      - ./tagger:/app/tagger
     environment:
       - DB_PATH=/app/db/rss.sqlite
       - TRANSMISSION_HOST=transmission
