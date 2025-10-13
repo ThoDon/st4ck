@@ -5,13 +5,13 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install additional dependencies for tagging
 RUN pip install --no-cache-dir mutagen==1.47.0 colorama==0.4.6 tqdm==4.66.1
 
-COPY . .
+COPY api/ .
 
 # Copy tagger module from build context
 COPY tagger ./tagger
