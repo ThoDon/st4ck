@@ -596,8 +596,12 @@ async def search_audible_books(request: AudibleSearchRequest):
     try:
         # Import the AudibleAPIClient
         import sys
+        import os
         sys.path.insert(0, '/app')
-        from tagger.audible_client import AudibleAPIClient
+        # Ensure the tagger module can be found
+        if '/app/tagger' not in sys.path:
+            sys.path.insert(0, '/app/tagger')
+        from audible_client import AudibleAPIClient
         
         client = AudibleAPIClient()
         
@@ -622,8 +626,12 @@ async def parse_filename_for_search(request: ParseFilenameRequest):
     try:
         # Import the AudibleAPIClient
         import sys
+        import os
         sys.path.insert(0, '/app')
-        from tagger.audible_client import AudibleAPIClient
+        # Ensure the tagger module can be found
+        if '/app/tagger' not in sys.path:
+            sys.path.insert(0, '/app/tagger')
+        from audible_client import AudibleAPIClient
         
         client = AudibleAPIClient()
         title, author = client.parse_filename(request.filename)
@@ -667,9 +675,12 @@ async def tag_file_with_metadata(request: TagFileRequest):
         import sys
         import os
         sys.path.insert(0, '/app')
+        # Ensure the tagger module can be found
+        if '/app/tagger' not in sys.path:
+            sys.path.insert(0, '/app/tagger')
         logger.info("Importing tagger modules...")
-        from tagger.m4b_tagger import M4BTagger
-        from tagger.audible_client import AudibleAPIClient
+        from m4b_tagger import M4BTagger
+        from audible_client import AudibleAPIClient
         from pathlib import Path
         logger.info("Tagger modules imported successfully")
         

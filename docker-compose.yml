@@ -111,6 +111,7 @@ services:
       - TRANSMISSION_PORT=9091
       - TRANSMISSION_USER=admin
       - TRANSMISSION_PASS=admin
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
     depends_on:
       - dir-init
       - transmission
