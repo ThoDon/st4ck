@@ -16,7 +16,14 @@ echo "   Using LIBRARY_DIR: $LIBRARY_DIR"
 echo "   Creating main data directories..."
 mkdir -p "$DATA_DIR/db"
 mkdir -p "$DATA_DIR/downloads"
-mkdir -p "$LIBRARY_DIR/library"
+# Create library directory (can be separate from data)
+if [ "$DATA_DIR" = "$LIBRARY_DIR" ]; then
+    # If same as data dir, add /library suffix
+    mkdir -p "$LIBRARY_DIR/library"
+else
+    # If different from data dir, use as-is (user specified exact path)
+    mkdir -p "$LIBRARY_DIR"
+fi
 mkdir -p "$DATA_DIR/covers"
 mkdir -p "$DATA_DIR/toTag"
 mkdir -p "$DATA_DIR/drop-torrents"
@@ -52,7 +59,9 @@ echo "           ├── backup/"
 echo "           ├── delete/"
 echo "           └── fix/"
 echo ""
-echo "   $LIBRARY_DIR/"
-echo "   └── library/"
-echo ""
+if [ "$DATA_DIR" != "$LIBRARY_DIR" ]; then
+    echo "   $LIBRARY_DIR/"
+    echo "   └── (library files)"
+    echo ""
+fi
 echo "🚀 Directory initialization complete! Other services can now start."

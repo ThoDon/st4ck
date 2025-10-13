@@ -695,7 +695,7 @@ async def tag_file_with_metadata(request: TagFileRequest):
         
         # Create directories
         library_dir = Path("/app/library")
-        covers_dir = Path("/app/covers")
+        covers_dir = Path("/app/data/covers")
         logger.info(f"Library dir: {library_dir}, Covers dir: {covers_dir}")
         
         # Initialize tagger
