@@ -40,7 +40,7 @@ move_untagged_m4b() {
     find /untagged -mindepth 1 -maxdepth 1 -type d | while read -r dir; do
         if [ -n "$dir" ]; then
             # Skip folders containing "-tmpfiles" in their name
-            if echo "$dir" | grep -q "-tmpfiles"; then
+            if echo "$dir" | grep -q -- "-tmpfiles"; then
                 echo "⏭️ Skipping tmpfiles folder: $dir"
                 continue
             fi
