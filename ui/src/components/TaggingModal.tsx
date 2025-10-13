@@ -140,51 +140,35 @@ const TaggingModal: React.FC<TaggingModalProps> = ({
 
         {/* Content */}
         <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
-          {/* File Info */}
-          <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-            <h3 className="font-medium text-gray-900 dark:text-white mb-2">
-              File to Tag
-            </h3>
-            <p className="text-sm text-gray-600 dark:text-gray-300">
-              <strong>Name:</strong> {item.name}
-            </p>
-            {item.folder && (
-              <p className="text-sm text-gray-600 dark:text-gray-300">
-                <strong>Folder:</strong> {item.folder}
-              </p>
-            )}
-
-            {/* Filename Parsing Results */}
-            {isParsingFilename ? (
-              <div className="mt-3 flex items-center space-x-2">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-500"></div>
-                <span className="text-sm text-gray-500 dark:text-gray-400">
-                  Parsing filename...
+          {isParsingFilename ? (
+            <div className="mt-3 flex items-center space-x-2">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-500"></div>
+              <span className="text-sm text-gray-500 dark:text-gray-400">
+                Parsing filename...
+              </span>
+            </div>
+          ) : filenameData ? (
+            <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded">
+              <div className="flex items-center space-x-2 mb-2">
+                <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                  Parsed Information
                 </span>
               </div>
-            ) : filenameData ? (
-              <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded">
-                <div className="flex items-center space-x-2 mb-2">
-                  <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                  <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
-                    Parsed Information
-                  </span>
-                </div>
-                <div className="space-y-1 text-sm text-blue-700 dark:text-blue-300">
-                  <p>
-                    <strong>Title:</strong> {filenameData.title}
-                  </p>
-                  <p>
-                    <strong>Author:</strong> {filenameData.author}
-                  </p>
-                  <p>
-                    <strong>Suggested Query:</strong> "
-                    {filenameData.suggested_query}"
-                  </p>
-                </div>
+              <div className="space-y-1 text-sm text-blue-700 dark:text-blue-300">
+                <p>
+                  <strong>Title:</strong> {filenameData.title}
+                </p>
+                <p>
+                  <strong>Author:</strong> {filenameData.author}
+                </p>
+                <p>
+                  <strong>Suggested Query:</strong> "
+                  {filenameData.suggested_query}"
+                </p>
               </div>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
 
           {/* Search Section */}
           <div className="mb-6">
@@ -288,37 +272,6 @@ const TaggingModal: React.FC<TaggingModalProps> = ({
                     </div>
                   </div>
                 ))}
-              </div>
-            </div>
-          )}
-
-          {/* Selected Book Preview */}
-          {selectedBook && (
-            <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-              <h3 className="font-medium text-green-800 dark:text-green-200 mb-2">
-                Selected Book
-              </h3>
-              <div className="flex space-x-4">
-                {selectedBook.cover_url && (
-                  <img
-                    src={selectedBook.cover_url}
-                    alt={selectedBook.title}
-                    className="w-20 h-28 object-cover rounded"
-                  />
-                )}
-                <div className="flex-1">
-                  <h4 className="font-medium text-green-900 dark:text-green-100">
-                    {selectedBook.title}
-                  </h4>
-                  <p className="text-sm text-green-700 dark:text-green-300">
-                    by {selectedBook.author}
-                  </p>
-                  {selectedBook.narrator && (
-                    <p className="text-sm text-green-600 dark:text-green-400">
-                      Narrated by: {selectedBook.narrator}
-                    </p>
-                  )}
-                </div>
               </div>
             </div>
           )}

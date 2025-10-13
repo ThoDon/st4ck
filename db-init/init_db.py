@@ -88,6 +88,7 @@ def init_database():
             current_file TEXT,
             status TEXT DEFAULT 'pending',
             progress_percentage REAL DEFAULT 0.0,
+            estimated_eta_seconds INTEGER,
             merge_folder_path TEXT,
             temp_folder_path TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

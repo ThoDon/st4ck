@@ -15,6 +15,7 @@ export interface ConversionTracking {
   current_file: string | null;
   status: string;
   progress_percentage: number;
+  estimated_eta_seconds: number | null;
   merge_folder_path: string | null;
   temp_folder_path: string | null;
   created_at: string;

@@ -60,6 +60,26 @@ const Conversion: React.FC = () => {
     return new Date(dateString).toLocaleString();
   };
 
+  const formatETA = (etaSeconds: number | null): string | null => {
+    if (!etaSeconds) return null;
+
+    if (etaSeconds < 60) {
+      return `${etaSeconds}s`;
+    } else if (etaSeconds < 3600) {
+      const minutes = Math.floor(etaSeconds / 60);
+      const remainingSeconds = etaSeconds % 60;
+      return remainingSeconds > 0
+        ? `${minutes}m ${remainingSeconds}s`
+        : `${minutes}m`;
+    } else {
+      const hours = Math.floor(etaSeconds / 3600);
+      const remainingMinutes = Math.floor((etaSeconds % 3600) / 60);
+      return remainingMinutes > 0
+        ? `${hours}h ${remainingMinutes}m`
+        : `${hours}h`;
+    }
+  };
+
   // Define table columns for Conversion
   const conversionColumns: TableColumn[] = [
     {
@@ -115,6 +135,13 @@ const Conversion: React.FC = () => {
               }}
             ></div>
           </div>
+          {conversion.status === "converting" &&
+            conversion.estimated_eta_seconds && (
+              <div className="flex items-center text-xs text-gray-500 dark:text-gray-400">
+                <Clock className="w-3 h-3 mr-1" />
+                <span>ETA: {formatETA(conversion.estimated_eta_seconds)}</span>
+              </div>
+            )}
         </div>
       ),
     },

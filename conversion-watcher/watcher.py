@@ -19,6 +19,7 @@ import time
 import sqlite3
 import logging
 import requests
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from watchdog.observers import Observer
@@ -85,15 +86,31 @@ class ConversionTracker:
                 logger.error(f"Failed to log to API: {e}")
                 return
     
-    def get_merge_files(self) -> List[str]:
-        """Get all files in merge folder"""
-        merge_files = []
+    def get_merge_files_count(self) -> int:
+        """Get count of all MP3 files in merge folder (including those in book subfolders)"""
+        file_count = 0
         if os.path.exists(MERGE_PATH):
             for item in os.listdir(MERGE_PATH):
                 item_path = os.path.join(MERGE_PATH, item)
-                if os.path.isfile(item_path) and item.endswith('.m4b'):
-                    merge_files.append(item)
-        return merge_files
+                if os.path.isdir(item_path):
+                    # This is a book folder, count MP3 files inside it
+                    for file in os.listdir(item_path):
+                        if file.endswith('.mp3'):
+                            file_count += 1
+                elif os.path.isfile(item_path) and item.endswith('.mp3'):
+                    # Direct MP3 file in merge folder
+                    file_count += 1
+        return file_count
+    
+    def get_merge_book_folders(self) -> List[str]:
+        """Get list of book folder names in merge directory"""
+        book_folders = []
+        if os.path.exists(MERGE_PATH):
+            for item in os.listdir(MERGE_PATH):
+                item_path = os.path.join(MERGE_PATH, item)
+                if os.path.isdir(item_path):
+                    book_folders.append(item)
+        return book_folders
     
     def get_untagged_folders(self) -> List[str]:
         """Get all folders in untagged directory"""
@@ -152,6 +169,41 @@ class ConversionTracker:
             return folder_name[:-9]  
         return folder_name
     
+    def calculate_eta(self, progress_percentage: float, created_at: str) -> Optional[int]:
+        """Calculate estimated time remaining in seconds based on progress and elapsed time"""
+        if progress_percentage <= 0 or progress_percentage >= 100:
+            return None
+            
+        try:
+            # Parse the created_at timestamp
+            created_datetime = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            if created_datetime.tzinfo is None:
+                # If no timezone info, assume local time
+                created_datetime = datetime.fromisoformat(created_at)
+            
+            # Calculate elapsed time
+            now = datetime.now()
+            if created_datetime.tzinfo is not None:
+                now = now.replace(tzinfo=created_datetime.tzinfo)
+            
+            elapsed_seconds = (now - created_datetime).total_seconds()
+            
+            # Calculate estimated total time based on current progress
+            estimated_total_seconds = elapsed_seconds / (progress_percentage / 100.0)
+            
+            # Calculate remaining time
+            remaining_seconds = estimated_total_seconds - elapsed_seconds
+            
+            # Return None if calculation seems unreasonable (negative or too large)
+            if remaining_seconds < 0 or remaining_seconds > 86400 * 7:  # More than 7 days
+                return None
+                
+            return int(remaining_seconds)
+            
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to calculate ETA: {e}")
+            return None
+    
     def update_conversion_tracking(self, book_name: str, merge_folder_path: str, temp_folder_path: str):
         """Update or create conversion tracking record"""
         try:
@@ -166,7 +218,7 @@ class ConversionTracker:
                 return
             
             # Get total files from merge folder
-            merge_files_count = len(self.get_merge_files())
+            merge_files_count = self.get_merge_files_count()
             
             # Get current conversion status
             untagged_folders = self.get_untagged_folders()
@@ -237,39 +289,60 @@ class ConversionTracker:
                 # Calculate progress percentage
                 if total_files > 0:
                     progress_percentage = (converted_files / total_files) * 100
+            elif merge_folder_path is None and temp_folder_path is None:
+                # No folders found - this likely means the conversion completed and files were moved
+                # Check if we have a reasonable total_files count from the database
+                if total_files > 0:
+                    status = "completed"
+                    current_file = None
+                    converted_files = total_files
+                    progress_percentage = 100.0
+                    logger.info(f"Marking '{book_name}' as completed - no folders found, assuming files moved to final location")
+                else:
+                    # No total_files info, can't determine completion
+                    status = "unknown"
+                    current_file = "Status unclear - no folder or file count data"
+                    converted_files = 0
+                    progress_percentage = 0.0
             
             # Check if record exists
             cursor.execute(
-                'SELECT id FROM conversion_tracking WHERE book_name = ?',
+                'SELECT id, created_at FROM conversion_tracking WHERE book_name = ?',
                 (book_name,)
             )
             existing = cursor.fetchone()
+            
+            # Calculate ETA
+            estimated_eta_seconds = None
+            if existing and progress_percentage > 0:
+                estimated_eta_seconds = self.calculate_eta(progress_percentage, existing[1])
             
             if existing:
                 # Update existing record
                 cursor.execute('''
                     UPDATE conversion_tracking 
                     SET total_files = ?, converted_files = ?, current_file = ?, 
-                        status = ?, progress_percentage = ?, merge_folder_path = ?,
-                        temp_folder_path = ?, updated_at = CURRENT_TIMESTAMP
+                        status = ?, progress_percentage = ?, estimated_eta_seconds = ?,
+                        merge_folder_path = ?, temp_folder_path = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE book_name = ?
                 ''', (total_files, converted_files, current_file, status, 
-                      progress_percentage, merge_folder_path, temp_folder_path, book_name))
+                      progress_percentage, estimated_eta_seconds, merge_folder_path, temp_folder_path, book_name))
             else:
                 # Create new record
                 cursor.execute('''
                     INSERT INTO conversion_tracking 
                     (book_name, total_files, converted_files, current_file, status, 
-                     progress_percentage, merge_folder_path, temp_folder_path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     progress_percentage, estimated_eta_seconds, merge_folder_path, temp_folder_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (book_name, total_files, converted_files, current_file, status,
-                      progress_percentage, merge_folder_path, temp_folder_path))
+                      progress_percentage, estimated_eta_seconds, merge_folder_path, temp_folder_path))
             
             conn.commit()
             conn.close()
             
-            logger.info(f"Updated conversion tracking for '{book_name}': {status} ({progress_percentage:.1f}%) - Total: {total_files}, Converted: {converted_files}, Merge files: {merge_files_count}")
-            self.log_to_api("INFO", f"Updated conversion tracking for '{book_name}': {status} ({progress_percentage:.1f}%) - Total: {total_files}, Converted: {converted_files}")
+            eta_str = f", ETA: {estimated_eta_seconds}s" if estimated_eta_seconds else ""
+            logger.info(f"Updated conversion tracking for '{book_name}': {status} ({progress_percentage:.1f}%) - Total: {total_files}, Converted: {converted_files}, Merge files: {merge_files_count}{eta_str}")
+            self.log_to_api("INFO", f"Updated conversion tracking for '{book_name}': {status} ({progress_percentage:.1f}%) - Total: {total_files}, Converted: {converted_files}{eta_str}")
             
         except Exception as e:
             logger.error(f"Error updating conversion tracking: {e}")
@@ -278,8 +351,8 @@ class ConversionTracker:
     def scan_all_conversions(self):
         """Scan all current conversions and update tracking"""
         try:
-            # Get all merge files to determine books being processed
-            merge_files = self.get_merge_files()
+            # Get all book folders from merge and untagged directories
+            merge_book_folders = self.get_merge_book_folders()
             untagged_folders = self.get_untagged_folders()
             
             # Process each book
@@ -295,14 +368,30 @@ class ConversionTracker:
                     processed_books.add(book_name)
             
             # Then process any remaining books that might be in merge but not yet in untagged
-            for merge_file in merge_files:
-                # Extract book name from filename (remove .m4b extension)
-                book_name = merge_file[:-4] if merge_file.endswith('.m4b') else merge_file
-                if book_name not in processed_books:
+            for book_folder in merge_book_folders:
+                if book_folder not in processed_books:
                     merge_folder_path = MERGE_PATH
                     temp_folder_path = None
-                    self.update_conversion_tracking(book_name, merge_folder_path, temp_folder_path)
-                    processed_books.add(book_name)
+                    self.update_conversion_tracking(book_folder, merge_folder_path, temp_folder_path)
+                    processed_books.add(book_folder)
+            
+            # Finally, check existing database records for books that might have completed
+            # but no longer have folders in merge/untagged (files moved to final location)
+            conn = self.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT book_name FROM conversion_tracking WHERE status IN ("converting", "pending")')
+            db_books = [row[0] for row in cursor.fetchall()]
+            conn.close()
+            
+            logger.info(f"Found {len(db_books)} books in database with converting/pending status: {db_books}")
+            logger.info(f"Processed books: {processed_books}")
+            
+            for book_name in db_books:
+                if book_name not in processed_books:
+                    # This book is in the database but not in current folders
+                    # Check if it should be marked as completed
+                    logger.info(f"Processing completed book '{book_name}' - no folders found")
+                    self.update_conversion_tracking(book_name, None, None)
                     
         except Exception as e:
             logger.error(f"Error scanning conversions: {e}")

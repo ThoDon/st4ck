@@ -140,10 +140,29 @@ class ConversionTracking(BaseModel):
     current_file: Optional[str]
     status: str
     progress_percentage: float
+    estimated_eta_seconds: Optional[int]
     merge_folder_path: Optional[str]
     temp_folder_path: Optional[str]
     created_at: str
     updated_at: str
+    
+    @property
+    def estimated_eta_formatted(self) -> Optional[str]:
+        """Format ETA in human-readable format"""
+        if not self.estimated_eta_seconds:
+            return None
+        
+        seconds = self.estimated_eta_seconds
+        if seconds < 60:
+            return f"{seconds}s"
+        elif seconds < 3600:
+            minutes = seconds // 60
+            remaining_seconds = seconds % 60
+            return f"{minutes}m {remaining_seconds}s" if remaining_seconds > 0 else f"{minutes}m"
+        else:
+            hours = seconds // 3600
+            remaining_minutes = (seconds % 3600) // 60
+            return f"{hours}h {remaining_minutes}m" if remaining_minutes > 0 else f"{hours}h"
 
 
 # Database helper
@@ -785,10 +804,11 @@ async def get_conversions():
                 current_file=row[4],
                 status=row[5],
                 progress_percentage=row[6],
-                merge_folder_path=row[7],
-                temp_folder_path=row[8],
-                created_at=row[9],
-                updated_at=row[10]
+                estimated_eta_seconds=row[7],
+                merge_folder_path=row[8],
+                temp_folder_path=row[9],
+                created_at=row[10],
+                updated_at=row[11]
             ))
         conn.close()
         return conversions
@@ -818,10 +838,11 @@ async def get_conversion(conversion_id: int):
             current_file=row[4],
             status=row[5],
             progress_percentage=row[6],
-            merge_folder_path=row[7],
-            temp_folder_path=row[8],
-            created_at=row[9],
-            updated_at=row[10]
+            estimated_eta_seconds=row[7],
+            merge_folder_path=row[8],
+            temp_folder_path=row[9],
+            created_at=row[10],
+            updated_at=row[11]
         )
     except HTTPException:
         raise
