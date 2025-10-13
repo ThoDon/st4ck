@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, Optional
 from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm
 
-from .constants import TagConstants
+from constants import TagConstants
 
 logger = logging.getLogger(__name__)
 
