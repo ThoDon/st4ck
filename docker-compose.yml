@@ -103,7 +103,6 @@ services:
       - ${LIBRARY_DIR:-./data}/library:/app/library
       - ${DATA_DIR:-./data}/saved-torrents-files:/app/saved-torrents-files
       - ${DATA_DIR:-./data}/toTag:/app/toTag
-      - ./tagger:/app/tagger
       - ${DATA_DIR:-./data}/covers:/app/covers
     environment:
       - DB_PATH=/app/db/rss.sqlite

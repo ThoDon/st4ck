@@ -570,7 +570,10 @@ async def get_tagging_status():
         # Check if our integrated tagging modules are available
         try:
             import sys
-            sys.path.append('/app/tagger')
+            # Add tagger directory to Python path
+            tagger_path = '/app/tagger'
+            if tagger_path not in sys.path:
+                sys.path.insert(0, tagger_path)
             from audible_client import AudibleAPIClient
             from m4b_tagger import M4BTagger
             
@@ -597,10 +600,10 @@ async def search_audible_books(request: AudibleSearchRequest):
         # Import the AudibleAPIClient
         import sys
         import os
-        sys.path.insert(0, '/app')
-        # Ensure the tagger module can be found
-        if '/app/tagger' not in sys.path:
-            sys.path.insert(0, '/app/tagger')
+        # Add tagger directory to Python path
+        tagger_path = '/app/tagger'
+        if tagger_path not in sys.path:
+            sys.path.insert(0, tagger_path)
         from audible_client import AudibleAPIClient
         
         client = AudibleAPIClient()
@@ -627,10 +630,10 @@ async def parse_filename_for_search(request: ParseFilenameRequest):
         # Import the AudibleAPIClient
         import sys
         import os
-        sys.path.insert(0, '/app')
-        # Ensure the tagger module can be found
-        if '/app/tagger' not in sys.path:
-            sys.path.insert(0, '/app/tagger')
+        # Add tagger directory to Python path
+        tagger_path = '/app/tagger'
+        if tagger_path not in sys.path:
+            sys.path.insert(0, tagger_path)
         from audible_client import AudibleAPIClient
         
         client = AudibleAPIClient()
@@ -674,10 +677,10 @@ async def tag_file_with_metadata(request: TagFileRequest):
         # Import the M4BTagger
         import sys
         import os
-        sys.path.insert(0, '/app')
-        # Ensure the tagger module can be found
-        if '/app/tagger' not in sys.path:
-            sys.path.insert(0, '/app/tagger')
+        # Add tagger directory to Python path
+        tagger_path = '/app/tagger'
+        if tagger_path not in sys.path:
+            sys.path.insert(0, tagger_path)
         logger.info("Importing tagger modules...")
         from m4b_tagger import M4BTagger
         from audible_client import AudibleAPIClient
