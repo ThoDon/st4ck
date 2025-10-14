@@ -145,24 +145,33 @@ services:
       retries: 3
       start_period: 60s
 
-  conversion-watcher:
-    build: ./conversion-watcher
-    container_name: conversion-watcher
+  converter:
+    build: ./converter
+    container_name: converter
     volumes:
+      - ${DATA_DIR:-./data}/toMerge:/input
+      - ${DATA_DIR:-./data}/converted:/output
+      - ${DATA_DIR:-./data}/conversion-backups:/backups
       - ${DATA_DIR:-./data}/db:/app/db
-      - ${DATA_DIR:-./data}/auto-m4b/temp:/app/auto-m4b/temp
     environment:
       - DB_PATH=/app/db/rss.sqlite
       - API_URL=http://api:8000
-      - AUTO_M4B_TEMP_PATH=/app/auto-m4b/temp
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CONVERSION_MAX_RETRIES=3
+      - CONVERSION_BACKUP_RETENTION=3
+      - CONVERSION_TIMEOUT=7200
+      - M4B_TOOL_BITRATE=64k
+      - M4B_TOOL_CODEC=aac
     depends_on:
       - dir-init
       - api
       - db-init
+      - redis
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "watcher.py"]
-      interval: 60s
+      test: ["CMD", "python", "-c", "import redis; r=redis.Redis(host='redis', port=6379, db=0); r.ping()"]
+      interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
