@@ -139,26 +139,6 @@ services:
       retries: 3
       start_period: 40s
 
-  auto-m4b:
-    image: seanap/auto-m4b:latest
-    platform: linux/amd64
-    volumes:
-      - ${DATA_DIR:-./data}/auto-m4b/config:/config
-      - ${DATA_DIR:-./data}/auto-m4b/temp:/temp
-    environment:
-      - CPU_CORES=${CPU_CORES:-2}
-      - SLEEPTIME=${SLEEPTIME:-1m}
-      - MAKE_BACKUP=${MAKE_BACKUP:-N}
-    depends_on:
-      - dir-init
-    restart: unless-stopped
-    healthcheck:
-      test:
-        ["CMD", "ps", "aux", "|", "grep", "-v", "grep", "|", "grep", "auto-m4b"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
 
   converter:
     build: ./converter
