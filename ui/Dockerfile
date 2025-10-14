@@ -30,8 +30,8 @@ COPY --from=builder /app/dist ./dist
 RUN echo '#!/bin/sh' > /app/start.sh && \
     echo 'if [ -n "$VITE_API_URL" ]; then' >> /app/start.sh && \
     echo '  echo "Setting API URL to: $VITE_API_URL"' >> /app/start.sh && \
-    echo '  # Replace localhost:8081 with the actual API URL in all JS files' >> /app/start.sh && \
-    echo '  find /app/dist -name "*.js" -exec sed -i "s|http://localhost:8081|$VITE_API_URL|g" {} \;' >> /app/start.sh && \
+    echo '  # Replace localhost:8000 with the actual API URL in all JS files' >> /app/start.sh && \
+    echo '  find /app/dist -name "*.js" -exec sed -i "s|http://localhost:8000|$VITE_API_URL|g" {} \;' >> /app/start.sh && \
     echo 'fi' >> /app/start.sh && \
     echo 'serve -s dist -l 3000' >> /app/start.sh && \
     chmod +x /app/start.sh
