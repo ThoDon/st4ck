@@ -161,7 +161,7 @@ services:
       - CONVERSION_MAX_RETRIES=3
       - CONVERSION_BACKUP_RETENTION=3
       - CONVERSION_TIMEOUT=7200
-      - M4B_TOOL_BITRATE=64k
+      - M4B_TOOL_BITRATE=128k
       - M4B_TOOL_CODEC=aac
     depends_on:
       - dir-init
