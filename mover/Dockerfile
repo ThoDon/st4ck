@@ -1,7 +1,7 @@
 FROM alpine:latest
 
-# Install curl
-RUN apk add --no-cache curl
+# Install curl and redis-cli
+RUN apk add --no-cache curl redis
 
 # Copy the mover script
 COPY mover.sh /usr/local/bin/mover.sh
