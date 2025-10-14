@@ -182,6 +182,22 @@ services:
       retries: 3
       start_period: 40s
 
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   db-init:
     build: ./db-init
     volumes:
@@ -200,14 +216,15 @@ services:
 
 volumes:
   transmission-config:
+  redis-data:
 
 x-data-directories: &data-directories
   - ${DATA_DIR:-./data}/drop-torrents
   - ${DATA_DIR:-./data}/downloads
   - ${DATA_DIR:-./data}/saved-torrents-files
-  - ${DATA_DIR:-./data}/auto-m4b/temp/recentlyadded
-  - ${DATA_DIR:-./data}/auto-m4b/temp/untagged
-  - ${DATA_DIR:-./data}/auto-m4b/temp/merge
+  - ${DATA_DIR:-./data}/toMerge
+  - ${DATA_DIR:-./data}/converted
   - ${DATA_DIR:-./data}/toTag
+  - ${DATA_DIR:-./data}/conversion-backups
   - ${LIBRARY_DIR:-${DATA_DIR:-./data}}
   - ${DATA_DIR:-./data}/db
