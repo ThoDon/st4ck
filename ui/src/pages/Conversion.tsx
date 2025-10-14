@@ -1,31 +1,33 @@
 import {
-  RefreshCw,
-  Clock,
-  CheckCircle,
   AlertCircle,
+  CheckCircle,
+  Clock,
   FileAudio,
+  Play,
+  RefreshCw,
   RotateCcw,
   X,
-  Play,
 } from "lucide-react";
 import React, { useState } from "react";
-import { useConversions } from "../hooks/useFetching";
-import { conversionService } from "../services/api";
-import PageContainer from "../components/PageContainer";
-import PageHeader from "../components/PageHeader";
-import EmptyState from "../components/EmptyState";
-import LoadingSpinner from "../components/LoadingSpinner";
-import ErrorAlert from "../components/ErrorAlert";
-import DataTable, { TableColumn } from "../components/DataTable";
 import {
-  ActionButtonGroup,
   ActionButton,
+  ActionButtonGroup,
   getButtonClassName,
 } from "../components/ActionButtonGroup";
+import DataTable, { TableColumn } from "../components/DataTable";
+import EmptyState from "../components/EmptyState";
+import ErrorAlert from "../components/ErrorAlert";
+import LoadingSpinner from "../components/LoadingSpinner";
+import PageContainer from "../components/PageContainer";
+import PageHeader from "../components/PageHeader";
+import { useConversions } from "../hooks/useFetching";
+import { conversionService } from "../services/api";
 
 const Conversion: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
-  const [actionLoading, setActionLoading] = useState<{ [key: number]: string }>({});
+  const [actionLoading, setActionLoading] = useState<{ [key: number]: string }>(
+    {}
+  );
 
   const { data: conversions, isLoading, error, refetch } = useConversions();
 
@@ -36,39 +38,39 @@ const Conversion: React.FC = () => {
   };
 
   const handleRetryConversion = async (conversionId: number) => {
-    setActionLoading(prev => ({ ...prev, [conversionId]: 'retry' }));
+    setActionLoading((prev) => ({ ...prev, [conversionId]: "retry" }));
     try {
       await conversionService.retryConversion(conversionId);
       await refetch();
     } catch (error) {
-      console.error('Failed to retry conversion:', error);
+      console.error("Failed to retry conversion:", error);
     } finally {
-      setActionLoading(prev => ({ ...prev, [conversionId]: '' }));
+      setActionLoading((prev) => ({ ...prev, [conversionId]: "" }));
     }
   };
 
   const handleCancelConversion = async (conversionId: number) => {
-    setActionLoading(prev => ({ ...prev, [conversionId]: 'cancel' }));
+    setActionLoading((prev) => ({ ...prev, [conversionId]: "cancel" }));
     try {
       await conversionService.cancelConversion(conversionId);
       await refetch();
     } catch (error) {
-      console.error('Failed to cancel conversion:', error);
+      console.error("Failed to cancel conversion:", error);
     } finally {
-      setActionLoading(prev => ({ ...prev, [conversionId]: '' }));
+      setActionLoading((prev) => ({ ...prev, [conversionId]: "" }));
     }
   };
 
   const handleTriggerConversion = async (conversionId: number) => {
-    setActionLoading(prev => ({ ...prev, [conversionId]: 'trigger' }));
+    setActionLoading((prev) => ({ ...prev, [conversionId]: "trigger" }));
     try {
       // This would need the book name and source path - for now just show the action
-      console.log('Trigger conversion for:', conversionId);
+      console.log("Trigger conversion for:", conversionId);
       await refetch();
     } catch (error) {
-      console.error('Failed to trigger conversion:', error);
+      console.error("Failed to trigger conversion:", error);
     } finally {
-      setActionLoading(prev => ({ ...prev, [conversionId]: '' }));
+      setActionLoading((prev) => ({ ...prev, [conversionId]: "" }));
     }
   };
 
@@ -202,16 +204,19 @@ const Conversion: React.FC = () => {
       render: (conversion) => {
         const isLoading = actionLoading[conversion.id];
         const canRetry = conversion.status === "failed";
-        const canCancel = conversion.status === "converting" || conversion.status === "pending";
+        const canCancel =
+          conversion.status === "converting" || conversion.status === "pending";
         const canTrigger = conversion.status === "pending";
-        
+
         return (
           <ActionButtonGroup>
             {canRetry && (
               <ActionButton
                 icon={
                   <RotateCcw
-                    className={`w-4 h-4 ${isLoading === 'retry' ? "animate-spin" : ""}`}
+                    className={`w-4 h-4 ${
+                      isLoading === "retry" ? "animate-spin" : ""
+                    }`}
                   />
                 }
                 onClick={() => handleRetryConversion(conversion.id)}
@@ -224,7 +229,9 @@ const Conversion: React.FC = () => {
               <ActionButton
                 icon={
                   <X
-                    className={`w-4 h-4 ${isLoading === 'cancel' ? "animate-pulse" : ""}`}
+                    className={`w-4 h-4 ${
+                      isLoading === "cancel" ? "animate-pulse" : ""
+                    }`}
                   />
                 }
                 onClick={() => handleCancelConversion(conversion.id)}
@@ -237,7 +244,9 @@ const Conversion: React.FC = () => {
               <ActionButton
                 icon={
                   <Play
-                    className={`w-4 h-4 ${isLoading === 'trigger' ? "animate-pulse" : ""}`}
+                    className={`w-4 h-4 ${
+                      isLoading === "trigger" ? "animate-pulse" : ""
+                    }`}
                   />
                 }
                 onClick={() => handleTriggerConversion(conversion.id)}

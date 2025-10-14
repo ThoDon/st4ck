@@ -41,7 +41,15 @@ const ActionButtonGroup: React.FC<ActionButtonGroupProps> = ({
 
 // Helper function to create rounded buttons for different positions
 const getButtonClassName = (
-  position: "first" | "middle" | "last" | "single"
+  position:
+    | "first"
+    | "middle"
+    | "last"
+    | "single"
+    | "retry"
+    | "cancel"
+    | "retry-cancel"
+    | "trigger"
 ) => {
   switch (position) {
     case "first":
@@ -51,6 +59,14 @@ const getButtonClassName = (
     case "last":
       return "rounded-r-sm rounded-l-none border-l-0";
     case "single":
+      return "rounded-sm";
+    case "retry":
+      return "rounded-l-sm rounded-r-none";
+    case "cancel":
+      return "rounded-r-sm rounded-l-none border-l-0";
+    case "retry-cancel":
+      return "rounded-sm";
+    case "trigger":
       return "rounded-sm";
     default:
       return "rounded-sm";

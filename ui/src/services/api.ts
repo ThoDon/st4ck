@@ -135,7 +135,11 @@ export const conversionService = {
     return response.data;
   },
 
-  async triggerConversion(bookName: string, sourcePath: string, rssItemId?: number): Promise<void> {
+  async triggerConversion(
+    bookName: string,
+    sourcePath: string,
+    rssItemId?: number
+  ): Promise<void> {
     await api.post("/conversions/trigger", {
       book_name: bookName,
       source_path: sourcePath,
@@ -143,7 +147,10 @@ export const conversionService = {
     });
   },
 
-  async retryConversion(conversionId: number, force: boolean = false): Promise<void> {
+  async retryConversion(
+    conversionId: number,
+    force: boolean = false
+  ): Promise<void> {
     await api.post(`/conversions/${conversionId}/retry`, { force });
   },
 
