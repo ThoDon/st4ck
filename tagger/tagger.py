@@ -3,20 +3,28 @@ import os
 import time
 import requests
 import json
+import redis
+import signal
 from datetime import datetime
 from pathlib import Path
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 import logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class TaggerEventHandler(FileSystemEventHandler):
-    def __init__(self, api_url="http://api:8000"):
+class TaggerService:
+    def __init__(self, api_url="http://api:8000", redis_host="redis", redis_port=6379):
         self.api_url = api_url
         self.to_tag_path = Path("/toTag")
+        self.redis_host = redis_host
+        self.redis_port = redis_port
+        self.redis_client = None
+        self.running = True
+        
+        # Set up signal handlers for graceful shutdown
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
         
     def log_to_api(self, level: str, message: str, retries: int = 3):
         """Log message to the API with retry logic"""
@@ -46,59 +54,91 @@ class TaggerEventHandler(FileSystemEventHandler):
         
         logger.error(f"Failed to log to API after {retries} attempts: {message}")
     
-    def on_created(self, event):
-        """Handle file/folder creation events"""
-        if event.is_directory:
-            self.handle_new_folder(event.src_path)
-        else:
-            self.handle_new_file(event.src_path)
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals"""
+        logger.info(f"Received signal {signum}, shutting down gracefully...")
+        self.running = False
     
-    def on_moved(self, event):
-        """Handle file/folder move events"""
-        if event.is_directory:
-            self.handle_new_folder(event.dest_path)
-        else:
-            self.handle_new_file(event.dest_path)
-    
-    def handle_new_folder(self, folder_path):
-        """Handle new folder in toTag directory"""
-        folder_path = Path(folder_path)
-        
-        # Check if it's in the toTag directory
+    def connect_redis(self) -> bool:
+        """Connect to Redis server"""
         try:
-            relative_path = folder_path.relative_to(self.to_tag_path)
-            if relative_path.parts[0] == "..":  # Not in toTag directory
+            self.redis_client = redis.Redis(
+                host=self.redis_host,
+                port=self.redis_port,
+                db=0,
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5
+            )
+            
+            # Test connection
+            self.redis_client.ping()
+            logger.info(f"Connected to Redis at {self.redis_host}:{self.redis_port}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to connect to Redis: {e}")
+            return False
+    
+    def handle_conversion_complete(self, message_data: dict):
+        """Handle conversion complete event from converter service"""
+        try:
+            book_name = message_data.get('book_name')
+            file_path = message_data.get('file_path')
+            
+            if not book_name:
+                logger.error(f"Invalid conversion complete message: {message_data}")
                 return
-        except ValueError:
-            return
-        
-        # Check if folder contains .m4b files
-        m4b_files = list(folder_path.glob("*.m4b"))
-        if m4b_files:
-            logger.info(f"📁 New m4b folder detected: {folder_path.name}")
-            self.log_to_api("INFO", f"New m4b folder detected: {folder_path.name}")
-            self.report_to_api(folder_path)
-        else:
-            logger.info(f"📁 New folder detected (no m4b): {folder_path.name}")
+            
+            logger.info(f"📁 Conversion complete event received for: {book_name}")
+            self.log_to_api("INFO", f"Conversion complete event received for: {book_name}")
+            
+            # Scan toTag directory for the new file
+            self.scan_to_tag_directory()
+            
+        except Exception as e:
+            logger.error(f"Error handling conversion complete: {e}")
+            self.log_to_api("ERROR", f"Error handling conversion complete: {e}")
     
-    def handle_new_file(self, file_path):
-        """Handle new file in toTag directory"""
-        file_path = Path(file_path)
-        
-        # Check if it's an m4b file
-        if file_path.suffix.lower() == '.m4b':
-            logger.info(f"🎵 New m4b file detected: {file_path.name}")
-            self.log_to_api("INFO", f"New m4b file detected: {file_path.name}")
-            self.report_to_api(file_path.parent)
+    def scan_to_tag_directory(self):
+        """Scan toTag directory for new m4b files"""
+        try:
+            if not self.to_tag_path.exists():
+                logger.warning("toTag directory does not exist")
+                return
+            
+            logger.info("🔍 Scanning toTag directory for new files...")
+            
+            # Look for m4b files directly in toTag directory
+            m4b_files = list(self.to_tag_path.glob("*.m4b"))
+            
+            for m4b_file in m4b_files:
+                logger.info(f"🎵 Found m4b file: {m4b_file.name}")
+                self.report_to_api(m4b_file.parent, m4b_file)
+            
+            # Also look for folders containing m4b files
+            for item in self.to_tag_path.iterdir():
+                if item.is_dir():
+                    folder_m4b_files = list(item.glob("*.m4b"))
+                    if folder_m4b_files:
+                        logger.info(f"📁 Found m4b folder: {item.name}")
+                        self.report_to_api(item)
+                        
+        except Exception as e:
+            logger.error(f"Error scanning toTag directory: {e}")
+            self.log_to_api("ERROR", f"Error scanning toTag directory: {e}")
     
-    def report_to_api(self, folder_path, retries: int = 3):
+    def report_to_api(self, folder_path, specific_file=None, retries: int = 3):
         """Report new tagging item to API with retry logic"""
         try:
             folder_path = Path(folder_path)
             relative_path = folder_path.relative_to(self.to_tag_path)
             
-            # Get all m4b files in the folder
-            m4b_files = list(folder_path.glob("*.m4b"))
+            # Get m4b files to report
+            if specific_file:
+                m4b_files = [specific_file]
+            else:
+                m4b_files = list(folder_path.glob("*.m4b"))
             
             for m4b_file in m4b_files:
                 # Make path relative to toTag directory for API container
@@ -142,25 +182,73 @@ class TaggerEventHandler(FileSystemEventHandler):
                     
         except Exception as e:
             logger.error(f"Error in report_to_api: {e}")
-
-def scan_existing_files():
-    """Scan existing files in toTag directory on startup"""
-    to_tag_path = Path("/toTag")
     
-    if not to_tag_path.exists():
-        logger.warning("toTag directory does not exist")
-        return
-    
-    logger.info("🔍 Scanning existing files in toTag directory...")
-    
-    for item in to_tag_path.iterdir():
-        if item.is_dir():
-            m4b_files = list(item.glob("*.m4b"))
-            if m4b_files:
-                logger.info(f"📁 Found existing m4b folder: {item.name}")
-                # Report existing items
-                handler = TaggerEventHandler()
-                handler.report_to_api(item)
+    def start(self):
+        """Start the tagger service"""
+        logger.info("🏷️ Tagger service started")
+        
+        # Wait for API to be available
+        if not wait_for_api():
+            logger.error("Cannot start tagger service without API connection")
+            return
+        
+        # Connect to Redis
+        if not self.connect_redis():
+            logger.error("Failed to connect to Redis, exiting...")
+            return
+        
+        # Scan existing files on startup
+        self.scan_to_tag_directory()
+        
+        # Create pub/sub object
+        pubsub = self.redis_client.pubsub()
+        
+        # Subscribe to conversion complete channel
+        pubsub.subscribe("audiobook:conversion_complete")
+        
+        logger.info("👀 Listening for conversion complete events...")
+        self.log_to_api("INFO", "Tagger service started and listening for Redis events")
+        
+        try:
+            # Main event loop
+            while self.running:
+                try:
+                    # Get message with timeout
+                    message = pubsub.get_message(timeout=1.0)
+                    
+                    if message and message['type'] == 'message':
+                        channel = message['channel']
+                        data = json.loads(message['data'])
+                        
+                        logger.info(f"Received message on {channel}: {data}")
+                        
+                        if channel == "audiobook:conversion_complete":
+                            self.handle_conversion_complete(data)
+                    
+                except redis.ConnectionError as e:
+                    logger.error(f"Redis connection error: {e}")
+                    # Try to reconnect
+                    if not self.connect_redis():
+                        logger.error("Failed to reconnect to Redis")
+                        break
+                    pubsub = self.redis_client.pubsub()
+                    pubsub.subscribe("audiobook:conversion_complete")
+                    
+                except Exception as e:
+                    logger.error(f"Error in main loop: {e}")
+                    time.sleep(5)  # Wait before continuing
+        
+        except KeyboardInterrupt:
+            logger.info("Received keyboard interrupt")
+        
+        finally:
+            # Cleanup
+            pubsub.close()
+            if self.redis_client:
+                self.redis_client.close()
+            
+            logger.info("✅ Tagger service stopped")
+            self.log_to_api("INFO", "Tagger service stopped")
 
 def wait_for_api(api_url="http://api:8000", max_retries=30):
     """Wait for the API service to be available"""
@@ -184,35 +272,8 @@ def wait_for_api(api_url="http://api:8000", max_retries=30):
 
 def main():
     """Main function"""
-    logger.info("🏷️ Tagger service started")
-    
-    # Wait for API to be available
-    if not wait_for_api():
-        logger.error("Cannot start tagger service without API connection")
-        return
-    
-    # Scan existing files
-    scan_existing_files()
-    
-    # Set up file system watcher
-    event_handler = TaggerEventHandler()
-    observer = Observer()
-    observer.schedule(event_handler, "/toTag", recursive=True)
-    
-    try:
-        observer.start()
-        logger.info("👀 Watching /toTag directory for changes...")
-        
-        # Keep the service running
-        while True:
-            time.sleep(1)
-            
-    except KeyboardInterrupt:
-        logger.info("🛑 Tagger service stopping...")
-        observer.stop()
-    
-    observer.join()
-    logger.info("✅ Tagger service stopped")
+    service = TaggerService()
+    service.start()
 
 if __name__ == "__main__":
     main()
