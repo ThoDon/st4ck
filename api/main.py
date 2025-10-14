@@ -62,8 +62,8 @@ class RSSItem(BaseModel):
     leechers: int
     torrent_url: Optional[str]
     status: str
-    created_at: str
-    updated_at: str
+    created_at: Optional[str]
+    updated_at: Optional[str]
     download_status: Optional[str] = None
     download_date: Optional[str] = None
 
@@ -73,15 +73,15 @@ class Download(BaseModel):
     status: str
     path: Optional[str]
     torrent_file: Optional[str]
-    created_at: str
-    updated_at: str
+    created_at: Optional[str]
+    updated_at: Optional[str]
 
 class LogEntry(BaseModel):
     id: int
     level: str
     message: str
     service: Optional[str]
-    created_at: str
+    created_at: Optional[str]
 
 class TorrentInfo(BaseModel):
     id: int
@@ -321,6 +321,19 @@ async def get_rss_items():
         ''')
         items = []
         for row in cursor.fetchall():
+            # Convert timestamps to ISO format strings
+            def format_timestamp(timestamp):
+                if timestamp is None:
+                    return None
+                if isinstance(timestamp, (int, float)):
+                    # Unix timestamp
+                    return datetime.fromtimestamp(timestamp).isoformat()
+                elif isinstance(timestamp, str):
+                    # Already a string, return as-is
+                    return timestamp
+                else:
+                    return str(timestamp)
+            
             # Create RSSItem with download status
             rss_item = RSSItem(
                 id=row[0],
@@ -336,10 +349,10 @@ async def get_rss_items():
                 leechers=row[10],
                 torrent_url=row[11],
                 status=row[12],
-                created_at=row[13],
-                updated_at=row[14],
-                download_status=row[15] if row[15] else 'not_downloaded',
-                download_date=row[16] if row[16] else None
+                created_at=format_timestamp(row[17]) or datetime.now().isoformat(),
+                updated_at=format_timestamp(row[18]) or datetime.now().isoformat(),
+                download_status=row[19] if row[19] else 'not_downloaded',
+                download_date=format_timestamp(row[20]) if row[20] else None
             )
             items.append(rss_item)
         
@@ -372,14 +385,27 @@ async def get_downloads():
         cursor.execute('SELECT * FROM downloads ORDER BY created_at DESC')
         downloads = []
         for row in cursor.fetchall():
+            # Convert timestamps to ISO format strings
+            def format_timestamp(timestamp):
+                if timestamp is None:
+                    return None
+                if isinstance(timestamp, (int, float)):
+                    # Unix timestamp
+                    return datetime.fromtimestamp(timestamp).isoformat()
+                elif isinstance(timestamp, str):
+                    # Already a string, return as-is
+                    return timestamp
+                else:
+                    return str(timestamp)
+            
             downloads.append(Download(
                 id=row[0],
                 rss_item_id=row[1],
                 status=row[2],
                 path=row[3],
                 torrent_file=row[4],
-                created_at=row[5],
-                updated_at=row[6]
+                created_at=format_timestamp(row[5]),
+                updated_at=format_timestamp(row[6])
             ))
         conn.close()
         return downloads
@@ -837,12 +863,25 @@ async def get_logs():
         cursor.execute('SELECT * FROM logs ORDER BY created_at DESC LIMIT 100')
         logs = []
         for row in cursor.fetchall():
+            # Convert timestamps to ISO format strings
+            def format_timestamp(timestamp):
+                if timestamp is None:
+                    return None
+                if isinstance(timestamp, (int, float)):
+                    # Unix timestamp
+                    return datetime.fromtimestamp(timestamp).isoformat()
+                elif isinstance(timestamp, str):
+                    # Already a string, return as-is
+                    return timestamp
+                else:
+                    return str(timestamp)
+            
             logs.append(LogEntry(
                 id=row[0],
                 level=row[1],
                 message=row[2],
                 service=row[3],
-                created_at=row[4]
+                created_at=format_timestamp(row[4])
             ))
         conn.close()
         return logs
