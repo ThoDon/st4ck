@@ -93,8 +93,8 @@ log_to_api "INFO" "Mover service started and completed initial scan"
 # Keep service running but don't poll continuously
 # The service will be triggered by external events (Transmission completion detection)
 while true; do
-    # Light monitoring - check every 5 minutes for any missed files
-    sleep 300
+    # Light monitoring - check every 30 seconds for any missed files
+    sleep 30
     echo "🔍 Periodic check for missed files..."
     move_download_directories
     move_converted_m4b

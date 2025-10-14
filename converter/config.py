@@ -23,8 +23,8 @@ M4B_TOOL_BITRATE = os.getenv("M4B_TOOL_BITRATE", "64k")
 M4B_TOOL_CODEC = os.getenv("M4B_TOOL_CODEC", "aac")
 
 # Paths
-INPUT_PATH = "/input"  # /toMerge
-OUTPUT_PATH = "/output"  # /converted
+INPUT_PATH = "/toMerge"  # /toMerge
+OUTPUT_PATH = "/converted"  # /converted
 BACKUP_PATH = "/backups"  # /conversion-backups
 
 # Redis Channels

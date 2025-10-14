@@ -8,6 +8,7 @@ import subprocess
 import sqlite3
 import logging
 import time
+import shlex
 from pathlib import Path
 from typing import Optional, Dict, List
 from datetime import datetime
@@ -89,35 +90,47 @@ class M4BConverter:
             total_files: Total number of files
             converted_files: Number of converted files
         """
-        try:
-            conn = self.get_db_connection()
-            cursor = conn.cursor()
-            
-            # Check if record exists
-            cursor.execute('SELECT id FROM conversion_tracking WHERE book_name = ?', (book_name,))
-            existing = cursor.fetchone()
-            
-            if existing:
-                # Update existing record
-                cursor.execute('''
-                    UPDATE conversion_tracking 
-                    SET status = ?, current_file = ?, progress_percentage = ?,
-                        total_files = ?, converted_files = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE book_name = ?
-                ''', (status, current_file, progress_percentage, total_files, converted_files, book_name))
-            else:
-                # Create new record
-                cursor.execute('''
-                    INSERT INTO conversion_tracking 
-                    (book_name, status, current_file, progress_percentage, total_files, converted_files)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (book_name, status, current_file, progress_percentage, total_files, converted_files))
-            
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            logger.error(f"Failed to update conversion progress: {e}")
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                conn = self.get_db_connection()
+                cursor = conn.cursor()
+                
+                # Check if record exists
+                cursor.execute('SELECT id FROM conversion_tracking WHERE book_name = ?', (book_name,))
+                existing = cursor.fetchone()
+                
+                if existing:
+                    # Update existing record
+                    cursor.execute('''
+                        UPDATE conversion_tracking 
+                        SET status = ?, current_file = ?, progress_percentage = ?,
+                            total_files = ?, converted_files = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE book_name = ?
+                    ''', (status, current_file, progress_percentage, total_files, converted_files, book_name))
+                else:
+                    # Create new record
+                    cursor.execute('''
+                        INSERT INTO conversion_tracking 
+                        (book_name, status, current_file, progress_percentage, total_files, converted_files)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (book_name, status, current_file, progress_percentage, total_files, converted_files))
+                
+                conn.commit()
+                conn.close()
+                return  # Success, exit retry loop
+                
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    logger.warning(f"Database locked, retrying in 1 second (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(1)
+                    continue
+                else:
+                    logger.error(f"Failed to update conversion progress after {max_retries} attempts: {e}")
+                    break
+            except Exception as e:
+                logger.error(f"Failed to update conversion progress: {e}")
+                break
     
     def convert_audiobook(self, input_path: str, output_path: str, book_name: str) -> bool:
         """
@@ -134,6 +147,11 @@ class M4BConverter:
         try:
             input_dir = Path(input_path)
             output_dir = Path(output_path)
+            
+            # Ensure input path exists
+            if not input_dir.exists():
+                logger.error(f"Input path does not exist: {input_path}")
+                return False
             
             # Ensure output directory exists
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -152,78 +170,87 @@ class M4BConverter:
                 book_name, "converting", "Starting conversion...", 0.0, total_files, 0
             )
             
-            # Build m4b-tool command
+            # Build m4b-tool command with relative paths
             output_file = output_dir / f"{book_name}.m4b"
+            
+            # Use absolute paths since the Docker wrapper mounts the entire root directory
+            input_absolute = input_path + "/"
+            output_absolute = str(output_file)
+            
+            # Debug: Check if the input directory exists and what's in it
+            logger.info(f"Checking input directory: {input_path}")
+            logger.info(f"Input directory exists: {input_dir.exists()}")
+            if input_dir.exists():
+                try:
+                    files = list(input_dir.iterdir())
+                    logger.info(f"Input directory contains {len(files)} items:")
+                    for item in files:
+                        logger.info(f"  - {item.name} ({'dir' if item.is_dir() else 'file'})")
+                except Exception as e:
+                    logger.error(f"Error listing input directory: {e}")
+            
+            # Debug: Check the absolute paths that will be used
+            logger.info(f"Input absolute path: {input_absolute}")
+            logger.info(f"Output absolute path: {output_absolute}")
+            
+            # Debug: Check what's in the toMerge directory
+            test_cmd = ["bash", "-c", f"ls -la /toMerge/"]
+            result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
+            logger.info(f"toMerge directory listing return code: {result.returncode}")
+            logger.info(f"toMerge directory listing STDOUT: {result.stdout}")
+            logger.info(f"toMerge directory listing STDERR: {result.stderr}")
+            
+            # Debug: Check what's in the specific book directory
+            test_cmd2 = ["bash", "-c", f"ls -la {shlex.quote(input_absolute)}"]
+            result2 = subprocess.run(test_cmd2, capture_output=True, text=True, timeout=10)
+            logger.info(f"Book directory listing return code: {result2.returncode}")
+            logger.info(f"Book directory listing STDOUT: {result2.stdout}")
+            logger.info(f"Book directory listing STDERR: {result2.stderr}")
+            
+            # Test m4b-tool with a simple command first
+            test_cmd = ["m4b-tool", "--version"]
+            test_result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
+            logger.info(f"m4b-tool version test return code: {test_result.returncode}")
+            logger.info(f"m4b-tool version test STDOUT: {test_result.stdout}")
+            logger.info(f"m4b-tool version test STDERR: {test_result.stderr}")
+            
+            # Test if m4b-tool can see the directory
+            test_cmd2 = ["bash", "-c", f"m4b-tool merge --help | head -10"]
+            test_result2 = subprocess.run(test_cmd2, capture_output=True, text=True, timeout=10)
+            logger.info(f"m4b-tool help test return code: {test_result2.returncode}")
+            logger.info(f"m4b-tool help test STDOUT: {test_result2.stdout}")
+            
+            # Test if m4b-tool can access the directory with a simple ls command
+            test_cmd3 = ["bash", "-c", f"m4b-tool merge {shlex.quote(input_absolute)} --dry-run"]
+            test_result3 = subprocess.run(test_cmd3, capture_output=True, text=True, timeout=30)
+            logger.info(f"m4b-tool dry-run test return code: {test_result3.returncode}")
+            logger.info(f"m4b-tool dry-run test STDOUT: {test_result3.stdout}")
+            logger.info(f"m4b-tool dry-run test STDERR: {test_result3.stderr}")
             
             cmd = [
                 "m4b-tool", "merge",
-                input_path,
-                "--output-file", str(output_file),
+                input_absolute,
+                "--output-file", output_absolute,
                 "--audio-bitrate", M4B_TOOL_BITRATE,
                 "--audio-codec", M4B_TOOL_CODEC,
-                "--no-chapter-reencoding",
-                "--jobs", "1"  # Single job for better progress tracking
+                "--jobs", "1",
+                "--verbose", "3"
             ]
             
             logger.info(f"Running command: {' '.join(cmd)}")
             
             # Start conversion process
-            process = subprocess.Popen(
+            result = subprocess.run(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                bufsize=1
+                capture_output=True,
+                text=True,
+                timeout=CONVERSION_TIMEOUT
             )
+            logger.info(f"m4b-tool return code: {result.returncode}")
+            logger.info(f"m4b-tool STDOUT:\n{result.stdout}")
+            logger.info(f"m4b-tool STDERR:\n{result.stderr}")
             
-            # Monitor progress
-            converted_files = 0
-            start_time = time.time()
-            
-            while True:
-                # Check if process is still running
-                if process.poll() is not None:
-                    break
-                
-                # Check timeout
-                if time.time() - start_time > CONVERSION_TIMEOUT:
-                    logger.error(f"Conversion timeout after {CONVERSION_TIMEOUT} seconds")
-                    process.terminate()
-                    self.update_conversion_progress(
-                        book_name, "failed", "Conversion timeout", 0.0, total_files, converted_files
-                    )
-                    return False
-                
-                # Read output line by line
-                try:
-                    line = process.stdout.readline()
-                    if line:
-                        logger.debug(f"m4b-tool: {line.strip()}")
-                        
-                        # Parse progress from output (basic parsing)
-                        if "Processing" in line or "Converting" in line:
-                            # Estimate progress based on time elapsed
-                            elapsed = time.time() - start_time
-                            estimated_total = elapsed * 1.2  # Rough estimate
-                            progress = min((elapsed / estimated_total) * 100, 95)
-                            
-                            self.update_conversion_progress(
-                                book_name, "converting", line.strip(), progress, total_files, converted_files
-                            )
-                        
-                        # Check for completion indicators
-                        if "completed" in line.lower() or "finished" in line.lower():
-                            converted_files = total_files
-                            break
-                            
-                except Exception as e:
-                    logger.warning(f"Error reading process output: {e}")
-                    break
-                
-                time.sleep(1)  # Small delay to prevent excessive CPU usage
-            
-            # Wait for process to complete
-            return_code = process.wait()
+            return_code = result.returncode
             
             if return_code == 0:
                 # Check if output file was created
@@ -236,13 +263,13 @@ class M4BConverter:
                 else:
                     logger.error(f"Conversion completed but output file not found: {output_file}")
                     self.update_conversion_progress(
-                        book_name, "failed", "Output file not created", 0.0, total_files, converted_files
+                        book_name, "failed", "Output file not created", 0.0, total_files, 0
                     )
                     return False
             else:
                 logger.error(f"Conversion failed with return code: {return_code}")
                 self.update_conversion_progress(
-                    book_name, "failed", f"Process failed with code {return_code}", 0.0, total_files, converted_files
+                    book_name, "failed", f"Process failed with code {return_code}", 0.0, total_files, 0
                 )
                 return False
                 

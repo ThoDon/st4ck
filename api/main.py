@@ -191,7 +191,6 @@ class ConversionTriggerRequest(BaseModel):
     rss_item_id: Optional[int] = None
 
 class ConversionRetryRequest(BaseModel):
-    conversion_id: int
     force: bool = False
 
 class BackupInfo(BaseModel):
@@ -995,41 +994,55 @@ async def trigger_conversion(request: ConversionTriggerRequest):
 async def retry_conversion(conversion_id: int, request: ConversionRetryRequest):
     """Retry a failed conversion"""
     try:
+        logger.info(f"Retry request for conversion_id: {conversion_id}, force: {request.force}")
+        
+        # Test database connection
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Get conversion job details
-        cursor.execute('SELECT * FROM conversion_jobs WHERE id = ?', (conversion_id,))
+        # Get conversion tracking details
+        cursor.execute('SELECT * FROM conversion_tracking WHERE id = ?', (conversion_id,))
+        tracking = cursor.fetchone()
+        
+        if not tracking:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Conversion tracking record not found")
+        
+        # Get the book name from tracking record
+        book_name = tracking[1]  # book_name is at index 1
+        
+        # Find the corresponding conversion job if it exists
+        cursor.execute('SELECT * FROM conversion_jobs WHERE book_name = ? ORDER BY created_at DESC LIMIT 1', (book_name,))
         job = cursor.fetchone()
         
-        if not job:
-            conn.close()
-            raise HTTPException(status_code=404, detail="Conversion job not found")
-        
-        # Check if retry is allowed
-        if job[5] >= job[6] and not request.force:  # attempts >= max_attempts
-            conn.close()
-            raise HTTPException(status_code=400, detail="Maximum retry attempts reached. Use force=true to override.")
+        # Check if retry is allowed (only if we have a job record)
+        if job:
+            attempts = int(job[6]) if job[6] is not None else 0      # attempts is at index 6
+            max_attempts = int(job[7]) if job[7] is not None else 3  # max_attempts is at index 7
+            if attempts >= max_attempts and not request.force:
+                conn.close()
+                raise HTTPException(status_code=400, detail="Maximum retry attempts reached. Use force=true to override.")
         
         # Publish retry event
         message = {
-            "book_name": job[2],  # book_name
-            "rss_item_id": job[1],  # rss_item_id
+            "book_name": book_name,
+            "rss_item_id": job[1] if job else None,  # rss_item_id from job if available
             "conversion_id": conversion_id
         }
         
         publish_redis_event("audiobook:retry_conversion", message)
-        log_to_db("INFO", f"Retry triggered for conversion {conversion_id}: {job[2]}")
         
         conn.close()
-        return {"message": f"Retry triggered for conversion {conversion_id}"}
+        return {"message": f"Retry triggered for conversion {conversion_id}", "book_name": book_name}
         
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        error_traceback = traceback.format_exc()
         logger.error(f"Error retrying conversion: {e}")
-        log_to_db("ERROR", f"Error retrying conversion: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Full traceback: {error_traceback}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/conversions/{conversion_id}/cancel")
 async def cancel_conversion(conversion_id: int):

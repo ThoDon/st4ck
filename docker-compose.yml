@@ -149,10 +149,11 @@ services:
     build: ./converter
     container_name: converter
     volumes:
-      - ${DATA_DIR:-./data}/toMerge:/input
-      - ${DATA_DIR:-./data}/converted:/output
+      - ${DATA_DIR:-./data}/toMerge:/toMerge
+      - ${DATA_DIR:-./data}/converted:/converted
       - ${DATA_DIR:-./data}/conversion-backups:/backups
       - ${DATA_DIR:-./data}/db:/app/db
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - DB_PATH=/app/db/rss.sqlite
       - API_URL=http://api:8000
