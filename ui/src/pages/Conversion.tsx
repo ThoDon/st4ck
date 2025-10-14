@@ -4,9 +4,13 @@ import {
   CheckCircle,
   AlertCircle,
   FileAudio,
+  RotateCcw,
+  X,
+  Play,
 } from "lucide-react";
 import React, { useState } from "react";
 import { useConversions } from "../hooks/useFetching";
+import { conversionService } from "../services/api";
 import PageContainer from "../components/PageContainer";
 import PageHeader from "../components/PageHeader";
 import EmptyState from "../components/EmptyState";
@@ -21,6 +25,7 @@ import {
 
 const Conversion: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
+  const [actionLoading, setActionLoading] = useState<{ [key: number]: string }>({});
 
   const { data: conversions, isLoading, error, refetch } = useConversions();
 
@@ -28,6 +33,43 @@ const Conversion: React.FC = () => {
     setRefreshing(true);
     await refetch();
     setRefreshing(false);
+  };
+
+  const handleRetryConversion = async (conversionId: number) => {
+    setActionLoading(prev => ({ ...prev, [conversionId]: 'retry' }));
+    try {
+      await conversionService.retryConversion(conversionId);
+      await refetch();
+    } catch (error) {
+      console.error('Failed to retry conversion:', error);
+    } finally {
+      setActionLoading(prev => ({ ...prev, [conversionId]: '' }));
+    }
+  };
+
+  const handleCancelConversion = async (conversionId: number) => {
+    setActionLoading(prev => ({ ...prev, [conversionId]: 'cancel' }));
+    try {
+      await conversionService.cancelConversion(conversionId);
+      await refetch();
+    } catch (error) {
+      console.error('Failed to cancel conversion:', error);
+    } finally {
+      setActionLoading(prev => ({ ...prev, [conversionId]: '' }));
+    }
+  };
+
+  const handleTriggerConversion = async (conversionId: number) => {
+    setActionLoading(prev => ({ ...prev, [conversionId]: 'trigger' }));
+    try {
+      // This would need the book name and source path - for now just show the action
+      console.log('Trigger conversion for:', conversionId);
+      await refetch();
+    } catch (error) {
+      console.error('Failed to trigger conversion:', error);
+    } finally {
+      setActionLoading(prev => ({ ...prev, [conversionId]: '' }));
+    }
   };
 
   const getStatusIcon = (status: string) => {
@@ -157,21 +199,67 @@ const Conversion: React.FC = () => {
     {
       key: "actions",
       label: "Actions",
-      render: () => (
-        <ActionButtonGroup>
-          <ActionButton
-            icon={
-              <RefreshCw
-                className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`}
+      render: (conversion) => {
+        const isLoading = actionLoading[conversion.id];
+        const canRetry = conversion.status === "failed";
+        const canCancel = conversion.status === "converting" || conversion.status === "pending";
+        const canTrigger = conversion.status === "pending";
+        
+        return (
+          <ActionButtonGroup>
+            {canRetry && (
+              <ActionButton
+                icon={
+                  <RotateCcw
+                    className={`w-4 h-4 ${isLoading === 'retry' ? "animate-spin" : ""}`}
+                  />
+                }
+                onClick={() => handleRetryConversion(conversion.id)}
+                disabled={!!isLoading}
+                title="Retry failed conversion"
+                className={getButtonClassName("retry")}
               />
-            }
-            onClick={handleRefresh}
-            disabled={refreshing}
-            title="Refresh conversion status"
-            className={getButtonClassName("single")}
-          />
-        </ActionButtonGroup>
-      ),
+            )}
+            {canCancel && (
+              <ActionButton
+                icon={
+                  <X
+                    className={`w-4 h-4 ${isLoading === 'cancel' ? "animate-pulse" : ""}`}
+                  />
+                }
+                onClick={() => handleCancelConversion(conversion.id)}
+                disabled={!!isLoading}
+                title="Cancel conversion"
+                className={getButtonClassName("cancel")}
+              />
+            )}
+            {canTrigger && (
+              <ActionButton
+                icon={
+                  <Play
+                    className={`w-4 h-4 ${isLoading === 'trigger' ? "animate-pulse" : ""}`}
+                  />
+                }
+                onClick={() => handleTriggerConversion(conversion.id)}
+                disabled={!!isLoading}
+                title="Start conversion"
+                className={getButtonClassName("trigger")}
+              />
+            )}
+            <ActionButton
+              icon={
+                <RefreshCw
+                  className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`}
+                />
+              }
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title="Refresh conversion status"
+              className={getButtonClassName("single")}
+            />
+          </ActionButtonGroup>
+        );
+      },
     },
   ];
 
@@ -198,7 +286,7 @@ const Conversion: React.FC = () => {
         <EmptyState
           icon={FileAudio}
           title="No conversions found"
-          description="Conversion tracking will appear here when auto-m4b starts processing files."
+          description="Conversion tracking will appear here when the converter service starts processing files."
         />
       ) : (
         <DataTable data={conversions} columns={conversionColumns} />

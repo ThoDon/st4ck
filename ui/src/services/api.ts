@@ -134,6 +134,46 @@ export const conversionService = {
     const response = await api.get(`/conversions/${conversionId}`);
     return response.data;
   },
+
+  async triggerConversion(bookName: string, sourcePath: string, rssItemId?: number): Promise<void> {
+    await api.post("/conversions/trigger", {
+      book_name: bookName,
+      source_path: sourcePath,
+      rss_item_id: rssItemId,
+    });
+  },
+
+  async retryConversion(conversionId: number, force: boolean = false): Promise<void> {
+    await api.post(`/conversions/${conversionId}/retry`, { force });
+  },
+
+  async cancelConversion(conversionId: number): Promise<void> {
+    await api.post(`/conversions/${conversionId}/cancel`);
+  },
+
+  async getConversionJobs(): Promise<any[]> {
+    const response = await api.get("/conversions/jobs");
+    return response.data;
+  },
+
+  async getBackups(): Promise<any[]> {
+    const response = await api.get("/conversions/backups");
+    return response.data;
+  },
+
+  async deleteBackup(backupName: string): Promise<void> {
+    await api.delete(`/conversions/backups/${backupName}`);
+  },
+
+  async getSystemHealth(): Promise<any> {
+    const response = await api.get("/system/health");
+    return response.data;
+  },
+
+  async getRedisStatus(): Promise<any> {
+    const response = await api.get("/system/redis/status");
+    return response.data;
+  },
 };
 
 export default api;
