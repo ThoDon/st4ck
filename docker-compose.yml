@@ -105,13 +105,18 @@ services:
     volumes:
       - ${DATA_DIR:-./data}/db:/app/db
       - ${DATA_DIR:-./data}/downloads:/app/downloads
-      - ${DATA_DIR:-./data}/auto-m4b/temp:/app/auto-m4b/temp
+      - ${DATA_DIR:-./data}/toMerge:/app/toMerge
+      - ${DATA_DIR:-./data}/converted:/app/converted
+      - ${DATA_DIR:-./data}/conversion-backups:/app/conversion-backups
       - ${LIBRARY_DIR:-${DATA_DIR:-./data}}:/app/library
       - ${DATA_DIR:-./data}/saved-torrents-files:/app/saved-torrents-files
       - ${DATA_DIR:-./data}/toTag:/app/toTag
       - ${DATA_DIR:-./data}/covers:/app/covers
     environment:
       - DB_PATH=/app/db/rss.sqlite
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
       - TRANSMISSION_HOST=transmission
       - TRANSMISSION_PORT=9091
       - TRANSMISSION_USER=admin
@@ -121,6 +126,7 @@ services:
       - dir-init
       - transmission
       - db-init
+      - redis
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

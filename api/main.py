@@ -7,6 +7,7 @@ import sqlite3
 import os
 import requests
 import json
+import redis
 from datetime import datetime
 import logging
 
@@ -33,6 +34,11 @@ app.add_middleware(
 
 # Database path
 DB_PATH = os.getenv("DB_PATH", "/app/db/rss.sqlite")
+
+# Redis Configuration
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 
 # External service URLs
 TRANSMISSION_HOST = os.getenv("TRANSMISSION_HOST", "transmission")
@@ -164,6 +170,37 @@ class ConversionTracking(BaseModel):
             remaining_minutes = (seconds % 3600) // 60
             return f"{hours}h {remaining_minutes}m" if remaining_minutes > 0 else f"{hours}h"
 
+class ConversionJob(BaseModel):
+    id: int
+    rss_item_id: Optional[int]
+    book_name: str
+    source_path: str
+    backup_path: Optional[str]
+    status: str
+    attempts: int
+    max_attempts: int
+    started_at: Optional[str]
+    completed_at: Optional[str]
+    error_message: Optional[str]
+    created_at: str
+    updated_at: str
+
+class ConversionTriggerRequest(BaseModel):
+    book_name: str
+    source_path: str
+    rss_item_id: Optional[int] = None
+
+class ConversionRetryRequest(BaseModel):
+    conversion_id: int
+    force: bool = False
+
+class BackupInfo(BaseModel):
+    name: str
+    path: str
+    size: int
+    created: str
+    modified: str
+
 
 # Database helper
 def get_db_connection():
@@ -188,6 +225,34 @@ def log_to_db(level: str, message: str, service: str = "api"):
         conn.close()
     except Exception as e:
         logger.error(f"Failed to log to database: {e}")
+
+# Redis helper
+def get_redis_client():
+    """Get Redis client connection"""
+    try:
+        return redis.Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            db=REDIS_DB,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5
+        )
+    except Exception as e:
+        logger.error(f"Failed to connect to Redis: {e}")
+        return None
+
+def publish_redis_event(channel: str, message: dict):
+    """Publish event to Redis channel"""
+    try:
+        redis_client = get_redis_client()
+        if redis_client:
+            redis_client.publish(channel, json.dumps(message))
+            logger.info(f"Published to {channel}: {message}")
+        else:
+            logger.error(f"Failed to publish to {channel}: Redis not available")
+    except Exception as e:
+        logger.error(f"Failed to publish to {channel}: {e}")
 
 # Transmission RPC helper
 def transmission_rpc(method: str, arguments: dict = None):
@@ -864,6 +929,244 @@ async def get_conversion(conversion_id: int):
         logger.error(f"Error fetching conversion: {e}")
         log_to_db("ERROR", f"Error fetching conversion: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# New conversion management endpoints
+@app.post("/conversions/trigger")
+async def trigger_conversion(request: ConversionTriggerRequest):
+    """Manually trigger conversion for a book"""
+    try:
+        # Publish Redis event to trigger conversion
+        message = {
+            "book_name": request.book_name,
+            "path": request.source_path,
+            "rss_item_id": request.rss_item_id
+        }
+        
+        publish_redis_event("audiobook:download_complete", message)
+        log_to_db("INFO", f"Manually triggered conversion for: {request.book_name}")
+        
+        return {"message": f"Conversion triggered for {request.book_name}"}
+        
+    except Exception as e:
+        logger.error(f"Error triggering conversion: {e}")
+        log_to_db("ERROR", f"Error triggering conversion: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/conversions/{conversion_id}/retry")
+async def retry_conversion(conversion_id: int, request: ConversionRetryRequest):
+    """Retry a failed conversion"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get conversion job details
+        cursor.execute('SELECT * FROM conversion_jobs WHERE id = ?', (conversion_id,))
+        job = cursor.fetchone()
+        
+        if not job:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Conversion job not found")
+        
+        # Check if retry is allowed
+        if job[5] >= job[6] and not request.force:  # attempts >= max_attempts
+            conn.close()
+            raise HTTPException(status_code=400, detail="Maximum retry attempts reached. Use force=true to override.")
+        
+        # Publish retry event
+        message = {
+            "book_name": job[2],  # book_name
+            "rss_item_id": job[1],  # rss_item_id
+            "conversion_id": conversion_id
+        }
+        
+        publish_redis_event("audiobook:retry_conversion", message)
+        log_to_db("INFO", f"Retry triggered for conversion {conversion_id}: {job[2]}")
+        
+        conn.close()
+        return {"message": f"Retry triggered for conversion {conversion_id}"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrying conversion: {e}")
+        log_to_db("ERROR", f"Error retrying conversion: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/conversions/{conversion_id}/cancel")
+async def cancel_conversion(conversion_id: int):
+    """Cancel an in-progress conversion"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Update job status to cancelled
+        cursor.execute('''
+            UPDATE conversion_jobs 
+            SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'processing'
+        ''', (conversion_id,))
+        
+        if cursor.rowcount == 0:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Conversion job not found or not in progress")
+        
+        conn.commit()
+        conn.close()
+        
+        log_to_db("INFO", f"Cancelled conversion {conversion_id}")
+        return {"message": f"Conversion {conversion_id} cancelled"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling conversion: {e}")
+        log_to_db("ERROR", f"Error cancelling conversion: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/conversions/jobs", response_model=List[ConversionJob])
+async def get_conversion_jobs():
+    """Get all conversion jobs"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM conversion_jobs ORDER BY created_at DESC')
+        jobs = []
+        for row in cursor.fetchall():
+            jobs.append(ConversionJob(
+                id=row[0],
+                rss_item_id=row[1],
+                book_name=row[2],
+                source_path=row[3],
+                backup_path=row[4],
+                status=row[5],
+                attempts=row[6],
+                max_attempts=row[7],
+                started_at=row[8],
+                completed_at=row[9],
+                error_message=row[10],
+                created_at=row[11],
+                updated_at=row[12]
+            ))
+        conn.close()
+        return jobs
+    except Exception as e:
+        logger.error(f"Error fetching conversion jobs: {e}")
+        log_to_db("ERROR", f"Error fetching conversion jobs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/conversions/backups", response_model=List[BackupInfo])
+async def get_backups():
+    """Get list of all backups with metadata"""
+    try:
+        import os
+        from pathlib import Path
+        
+        backup_dir = Path("/app/conversion-backups")
+        backups = []
+        
+        if backup_dir.exists():
+            for backup_path in backup_dir.iterdir():
+                if backup_path.is_dir():
+                    # Calculate total size
+                    total_size = sum(f.stat().st_size for f in backup_path.rglob('*') if f.is_file())
+                    
+                    backups.append(BackupInfo(
+                        name=backup_path.name,
+                        path=str(backup_path),
+                        size=total_size,
+                        created=datetime.fromtimestamp(backup_path.stat().st_ctime).isoformat(),
+                        modified=datetime.fromtimestamp(backup_path.stat().st_mtime).isoformat()
+                    ))
+        
+        # Sort by creation time (newest first)
+        backups.sort(key=lambda x: x.created, reverse=True)
+        return backups
+        
+    except Exception as e:
+        logger.error(f"Error listing backups: {e}")
+        log_to_db("ERROR", f"Error listing backups: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/conversions/backups/{backup_name}")
+async def delete_backup(backup_name: str):
+    """Delete a specific backup"""
+    try:
+        import shutil
+        from pathlib import Path
+        
+        backup_path = Path("/app/conversion-backups") / backup_name
+        
+        if not backup_path.exists():
+            raise HTTPException(status_code=404, detail="Backup not found")
+        
+        shutil.rmtree(backup_path)
+        log_to_db("INFO", f"Deleted backup: {backup_name}")
+        
+        return {"message": f"Backup {backup_name} deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting backup: {e}")
+        log_to_db("ERROR", f"Error deleting backup: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/system/health")
+async def system_health():
+    """Overall system health check"""
+    try:
+        health_status = {
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "services": {}
+        }
+        
+        # Check Redis
+        redis_client = get_redis_client()
+        if redis_client:
+            try:
+                redis_client.ping()
+                health_status["services"]["redis"] = "healthy"
+            except:
+                health_status["services"]["redis"] = "unhealthy"
+                health_status["status"] = "degraded"
+        else:
+            health_status["services"]["redis"] = "unavailable"
+            health_status["status"] = "degraded"
+        
+        # Check database
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            conn.close()
+            health_status["services"]["database"] = "healthy"
+        except:
+            health_status["services"]["database"] = "unhealthy"
+            health_status["status"] = "unhealthy"
+        
+        return health_status
+        
+    except Exception as e:
+        logger.error(f"Error checking system health: {e}")
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "error": str(e)
+        }
+
+@app.get("/system/redis/status")
+async def redis_status():
+    """Redis connection status"""
+    try:
+        redis_client = get_redis_client()
+        if redis_client:
+            redis_client.ping()
+            return {"status": "connected", "host": REDIS_HOST, "port": REDIS_PORT}
+        else:
+            return {"status": "disconnected", "error": "Failed to create Redis client"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 @app.get("/health")
 async def health_check():
