@@ -60,12 +60,16 @@ services:
     container_name: mover
     volumes:
       - ${DATA_DIR:-./data}/downloads:/downloads
-      - ${DATA_DIR:-./data}/auto-m4b/temp/recentlyadded:/toMerge
-      - ${DATA_DIR:-./data}/auto-m4b/temp/untagged:/untagged
+      - ${DATA_DIR:-./data}/toMerge:/toMerge
+      - ${DATA_DIR:-./data}/converted:/converted
       - ${DATA_DIR:-./data}/toTag:/toTag
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
       - dir-init
       - api
+      - redis
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "pgrep", "-f", "mover.sh"]
@@ -91,7 +95,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-  
+
   api:
     build:
       context: .
@@ -139,7 +143,8 @@ services:
       - dir-init
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "ps", "aux", "|", "grep", "-v", "grep", "|", "grep", "auto-m4b"]
+      test:
+        ["CMD", "ps", "aux", "|", "grep", "-v", "grep", "|", "grep", "auto-m4b"]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -170,7 +175,13 @@ services:
       - redis
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import redis; r=redis.Redis(host='redis', port=6379, db=0); r.ping()"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import redis; r=redis.Redis(host='redis', port=6379, db=0); r.ping()",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
