@@ -10,6 +10,38 @@ services:
       - LIBRARY_DIR=/library
     restart: "no"
 
+  db-init:
+    build: ./db-init
+    volumes:
+      - ${DATA_DIR:-./data}/db:/app/db
+    environment:
+      - DB_PATH=/app/db/rss.sqlite
+    depends_on:
+      - dir-init
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "test", "-f", "/app/db/rss.sqlite"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   rss-worker:
     build: ./rss-worker
     volumes:
@@ -185,6 +217,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
   ui:
     build: ./ui
     ports:
@@ -200,57 +233,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  redis:
-    image: redis:7-alpine
-    container_name: redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    command: redis-server --appendonly yes
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-  db-init:
-    build: ./db-init
-    volumes:
-      - ${DATA_DIR:-./data}/db:/app/db
-    environment:
-      - DB_PATH=/app/db/rss.sqlite
-    depends_on:
-      - dir-init
-    restart: "no"
-    healthcheck:
-      test: ["CMD", "test", "-f", "/app/db/rss.sqlite"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  # Auto M4B Ubuntu - Reference implementation for m4b-tool
-  auto-m4b-ubuntu:
-    build: ./auto-m4b-ubuntu
-    container_name: auto-m4b-ubuntu
-    volumes:
-      - ./auto-m4b-ubuntu/config:/config
-      - ${DATA_DIR:-./data}/toMerge:/temp/input
-      - ${DATA_DIR:-./data}/converted:/temp/output
-    environment:
-      TZ: America/New_York
-      PUID: "1000"
-      PGID: "1000"
-      CPU_CORES: "2"
-      SLEEPTIME: "1m"
-      MAKE_BACKUP: "N"
-    restart: unless-stopped
-    profiles:
-      - tools
 
 volumes:
   transmission-config:
