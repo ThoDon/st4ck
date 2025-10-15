@@ -8,7 +8,7 @@ import os
 import requests
 import json
 import redis
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 # Configure logging
@@ -320,6 +320,8 @@ async def get_rss_items():
         ''')
         items = []
         for row in cursor.fetchall():
+            # Debug: Log row length to help troubleshoot
+            logger.debug(f"RSS item row has {len(row)} columns")
             # Convert timestamps to ISO format strings
             def format_timestamp(timestamp):
                 if timestamp is None:
@@ -334,25 +336,32 @@ async def get_rss_items():
                     return str(timestamp)
             
             # Create RSSItem with download status
-            rss_item = RSSItem(
-                id=row[0],
-                title=row[1],
-                link=row[2],
-                pub_date=row[3],
-                description=row[4],
-                author=row[5],
-                year=row[6],
-                format=row[7],
-                file_size=row[8],
-                seeders=row[9],
-                leechers=row[10],
-                torrent_url=row[11],
-                status=row[12],
-                created_at=format_timestamp(row[17]) or datetime.now().isoformat(),
-                updated_at=format_timestamp(row[18]) or datetime.now().isoformat(),
-                download_status=row[19] if row[19] else 'not_downloaded',
-                download_date=format_timestamp(row[20]) if row[20] else None
-            )
+            # rss_items table has 19 columns (0-18), downloads adds 2 more (19-20)
+            try:
+                rss_item = RSSItem(
+                    id=row[0],
+                    title=row[1],
+                    link=row[2],
+                    pub_date=row[3],
+                    description=row[4],
+                    author=row[5],
+                    year=row[6],
+                    format=row[7],
+                    file_size=row[8],
+                    seeders=row[9],
+                    leechers=row[10],
+                    torrent_url=row[11],
+                    status=row[12],
+                    created_at=format_timestamp(row[17]) or datetime.now(timezone.utc).isoformat(),
+                    updated_at=format_timestamp(row[18]) or datetime.now(timezone.utc).isoformat(),
+                    download_status=row[19] if len(row) > 19 and row[19] else 'not_downloaded',
+                    download_date=format_timestamp(row[20]) if len(row) > 20 and row[20] else None
+                )
+            except IndexError as e:
+                logger.error(f"Index error processing RSS item row with {len(row)} columns: {e}")
+                logger.error(f"Row data: {row}")
+                # Skip this row and continue with the next one
+                continue
             items.append(rss_item)
         
         # Sort items by publication date (newer first)
@@ -1190,7 +1199,7 @@ async def system_health():
     try:
         health_status = {
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "services": {}
         }
         
@@ -1224,7 +1233,7 @@ async def system_health():
         logger.error(f"Error checking system health: {e}")
         return {
             "status": "unhealthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "error": str(e)
         }
 
@@ -1244,7 +1253,7 @@ async def redis_status():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 if __name__ == "__main__":
     import uvicorn
