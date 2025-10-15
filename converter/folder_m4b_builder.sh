@@ -14,8 +14,6 @@ if [[ -z "$INPUT_DIR" || -z "$OUTPUT_DIR" || -z "$BOOK_NAME" ]]; then
 fi
 
 echo "📁 Processing: $BOOK_NAME"
-echo "   Input: $INPUT_DIR"
-echo "   Output: $OUTPUT_DIR"
 
 # Check if input directory exists
 if [[ ! -d "$INPUT_DIR" ]]; then
@@ -34,28 +32,6 @@ fi
 
 echo "🎵 Found ${#FILES[@]} MP3 files"
 
-# Read tags from first file
-META="${FILES[0]}"
-AUTHOR=$(ffprobe -v error -show_entries format_tags=artist -of default=nw=1:nk=1 "$META" 2>/dev/null || echo "Unknown Author")
-ALBUM=$(ffprobe -v error -show_entries format_tags=album -of default=nw=1:nk=1 "$META" 2>/dev/null || echo "$BOOK_NAME")
-YEAR=$(ffprobe -v error -show_entries format_tags=date -of default=nw=1:nk=1 "$META" 2>/dev/null || echo "2023")
-COMMENT=$(ffprobe -v error -show_entries format_tags=comment -of default=nw=1:nk=1 "$META" 2>/dev/null || echo "")
-
-echo "🎯 Metadata:"
-echo "   Album : ${ALBUM}"
-echo "   Author: ${AUTHOR}"
-echo "   Year  : ${YEAR}"
-echo "   Comment: ${COMMENT}"
-
-# Cover image
-COVER_IMAGE="$INPUT_DIR/cover.jpg"
-COVER_ARG=()
-if [[ -f "$COVER_IMAGE" ]]; then
-    COVER_ARG=(--cover "$COVER_IMAGE")
-    echo "🖼️  Cover image found."
-else
-    echo "⚠️  No cover image found."
-fi
 
 # Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
@@ -67,17 +43,11 @@ OUTPUT_FILE="$OUTPUT_DIR/${BOOK_NAME}.m4b"
 echo "🎧 Creating: $OUTPUT_FILE"
 m4b-tool merge "$INPUT_DIR" \
     --output-file="$OUTPUT_FILE" \
-    --name="$ALBUM" \
-    --album="$ALBUM" \
-    --artist="$AUTHOR" \
-    --year="${YEAR}" \
-    --genre="Audiobook" \
-    --comment="$COMMENT" \
     --use-filenames-as-chapters \
     --no-chapter-reindexing \
     --audio-bitrate=128k \
     --audio-codec=aac \
-    --jobs=1 \
+    --jobs=2 \
     "${COVER_ARG[@]}"
 
 if [[ $? -eq 0 && -f "$OUTPUT_FILE" ]]; then
