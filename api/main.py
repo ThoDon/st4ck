@@ -225,6 +225,79 @@ def log_to_db(level: str, message: str, service: str = "api"):
     except Exception as e:
         logger.error(f"Failed to log to database: {e}")
 
+def cleanup_backup_on_tagging_success(book_name: str) -> bool:
+    """
+    Clean up backup and temporary files after successful tagging
+    
+    Args:
+        book_name: Name of the book to clean up
+        
+    Returns:
+        True if cleanup was successful, False otherwise
+    """
+    try:
+        import shutil
+        from pathlib import Path
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get backup path from database
+        cursor.execute('SELECT conversion_backup_path FROM rss_items WHERE title = ?', (book_name,))
+        result = cursor.fetchone()
+        
+        logger.info(f"Looking for backup cleanup for book: {book_name}")
+        if result:
+            logger.info(f"Found backup path in database: {result[0]}")
+        else:
+            logger.info(f"No backup path found in database for: {book_name}")
+        
+        cleanup_success = True
+        
+        # Clean up backup directory
+        if result and result[0]:
+            backup_path = Path(result[0])
+            if backup_path.exists():
+                shutil.rmtree(backup_path)
+                logger.info(f"Cleaned up backup after successful tagging: {backup_path}")
+            else:
+                logger.warning(f"Backup path from database does not exist: {backup_path}")
+            
+            # Clear backup path from database
+            cursor.execute('''
+                UPDATE rss_items 
+                SET conversion_backup_path = NULL, updated_at = CURRENT_TIMESTAMP
+                WHERE title = ?
+            ''', (book_name,))
+        else:
+            logger.info(f"No backup path found in database for {book_name}, trying pattern matching...")
+            # Fallback: find backup directory by pattern matching
+            backup_path = Path("/conversion-backups")
+            if backup_path.exists():
+                # Look for backup directories that start with the book name
+                for backup_folder in backup_path.iterdir():
+                    if backup_folder.is_dir() and backup_folder.name.startswith(f"{book_name}_"):
+                        logger.info(f"Found backup directory by pattern: {backup_folder}")
+                        shutil.rmtree(backup_folder)
+                        logger.info(f"Cleaned up backup directory by pattern: {backup_folder}")
+                        break
+        
+        # Clean up converted file from converted directory
+        converted_file = Path(f"/converted/{book_name}.m4b")
+        if converted_file.exists():
+            converted_file.unlink()
+            logger.info(f"Cleaned up converted file: {converted_file}")
+        else:
+            logger.info(f"No converted file found for {book_name}")
+        
+        conn.commit()
+        conn.close()
+        return cleanup_success
+        
+    except Exception as e:
+        logger.error(f"Failed to cleanup files on tagging success: {e}")
+        return False
+
 # Redis helper
 def get_redis_client():
     """Get Redis client connection"""
@@ -842,18 +915,11 @@ async def tag_file_with_metadata(request: TagFileRequest):
                 
                 # Clean up all temporary files after successful tagging
                 try:
-                    # Import backup manager from converter service
-                    import sys
-                    converter_path = '/app/converter'
-                    if converter_path not in sys.path:
-                        sys.path.insert(0, converter_path)
-                    from backup_manager import BackupManager
-                    
                     # Extract book name from file path for cleanup
                     book_name = file_path.stem  # Remove .m4b extension
                     log_to_db("INFO", f"Attempting to clean up backup for book: '{book_name}'")
-                    backup_manager = BackupManager()
-                    if backup_manager.cleanup_backup_on_tagging_success(book_name):
+                    
+                    if cleanup_backup_on_tagging_success(book_name):
                         log_to_db("INFO", f"Cleaned up temporary files (backup, converted) for: {book_name}")
                     else:
                         log_to_db("WARNING", f"Failed to clean up temporary files for: {book_name}")

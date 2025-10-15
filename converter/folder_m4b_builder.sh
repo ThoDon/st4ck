@@ -47,7 +47,7 @@ m4b-tool merge "$INPUT_DIR" \
     --no-chapter-reindexing \
     --audio-bitrate=128k \
     --audio-codec=aac \
-    --jobs=2 \
+    --jobs=3 \
     "${COVER_ARG[@]}"
 
 if [[ $? -eq 0 && -f "$OUTPUT_FILE" ]]; then
