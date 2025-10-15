@@ -52,6 +52,15 @@ m4b-tool merge "$INPUT_DIR" \
 
 if [[ $? -eq 0 && -f "$OUTPUT_FILE" ]]; then
     echo "✅ Successfully created: $OUTPUT_FILE"
+    
+    # Clean up input directory after successful conversion
+    echo "🧹 Cleaning up input directory: $INPUT_DIR"
+    if rm -rf "$INPUT_DIR"; then
+        echo "✅ Successfully cleaned up input directory: $INPUT_DIR"
+    else
+        echo "⚠️  Warning: Failed to clean up input directory: $INPUT_DIR"
+    fi
+    
     exit 0
 else
     echo "❌ Failed to create: $OUTPUT_FILE"

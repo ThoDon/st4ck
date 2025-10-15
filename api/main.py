@@ -831,7 +831,7 @@ async def tag_file_with_metadata(request: TagFileRequest):
                 
                 log_to_db("INFO", f"Successfully tagged and moved file: {file_path.name}")
                 
-                # Clean up conversion backup after successful tagging
+                # Clean up all temporary files after successful tagging
                 try:
                     # Import backup manager from converter service
                     import sys
@@ -840,15 +840,16 @@ async def tag_file_with_metadata(request: TagFileRequest):
                         sys.path.insert(0, converter_path)
                     from backup_manager import BackupManager
                     
-                    # Extract book name from file path for backup cleanup
+                    # Extract book name from file path for cleanup
                     book_name = file_path.stem  # Remove .m4b extension
+                    log_to_db("INFO", f"Attempting to clean up backup for book: '{book_name}'")
                     backup_manager = BackupManager()
                     if backup_manager.cleanup_backup_on_tagging_success(book_name):
-                        log_to_db("INFO", f"Cleaned up conversion backup for: {book_name}")
+                        log_to_db("INFO", f"Cleaned up temporary files (backup, converted) for: {book_name}")
                     else:
-                        log_to_db("WARNING", f"Failed to clean up conversion backup for: {book_name}")
+                        log_to_db("WARNING", f"Failed to clean up temporary files for: {book_name}")
                 except Exception as e:
-                    log_to_db("WARNING", f"Could not clean up conversion backup: {e}")
+                    log_to_db("WARNING", f"Could not clean up temporary files: {e}")
                 
                 return {
                     "message": "File tagged and moved successfully",
@@ -1247,4 +1248,54 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import logging.config
+    
+    # Configure logging to reduce noise from health checks and polling
+    logging_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            },
+            "access": {
+                "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            },
+        },
+        "handlers": {
+            "default": {
+                "formatter": "default",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stdout",
+            },
+            "access": {
+                "formatter": "access",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "loggers": {
+            "uvicorn": {
+                "handlers": ["default"],
+                "level": "INFO",
+                "propagate": False,
+            },
+            "uvicorn.error": {
+                "handlers": ["default"],
+                "level": "INFO",
+                "propagate": False,
+            },
+            "uvicorn.access": {
+                "handlers": ["access"],
+                "level": "ERROR",  # Only log errors for access logs (hide routine requests)
+                "propagate": False,
+            },
+        },
+    }
+    
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=8000,
+        log_config=logging_config
+    )

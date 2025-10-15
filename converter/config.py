@@ -25,7 +25,7 @@ M4B_TOOL_CODEC = os.getenv("M4B_TOOL_CODEC", "aac")
 # Paths
 INPUT_PATH = "/toMerge"  # /toMerge
 OUTPUT_PATH = "/converted"  # /converted
-BACKUP_PATH = "/backups"  # /conversion-backups
+BACKUP_PATH = "/conversion-backups"
 
 # Redis Channels
 CHANNEL_DOWNLOAD_COMPLETE = "audiobook:download_complete"

@@ -20,6 +20,7 @@ class BackupManager:
     def __init__(self):
         self.backup_path = Path(BACKUP_PATH)
         self.backup_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"BackupManager initialized with backup path: {self.backup_path}")
     
     def get_db_connection(self):
         """Get database connection"""
@@ -224,7 +225,7 @@ class BackupManager:
     
     def cleanup_backup_on_tagging_success(self, book_name: str) -> bool:
         """
-        Clean up backup after successful tagging (allows for quality validation)
+        Clean up backup and original files after successful tagging (allows for quality validation)
         
         Args:
             book_name: Name of the book
@@ -240,11 +241,22 @@ class BackupManager:
             cursor.execute('SELECT conversion_backup_path FROM rss_items WHERE title = ?', (book_name,))
             result = cursor.fetchone()
             
+            logger.info(f"Looking for backup cleanup for book: {book_name}")
+            if result:
+                logger.info(f"Found backup path in database: {result[0]}")
+            else:
+                logger.info(f"No backup path found in database for: {book_name}")
+            
+            cleanup_success = True
+            
+            # Clean up backup directory
             if result and result[0]:
                 backup_path = Path(result[0])
                 if backup_path.exists():
                     shutil.rmtree(backup_path)
                     logger.info(f"Cleaned up backup after successful tagging: {backup_path}")
+                else:
+                    logger.warning(f"Backup path from database does not exist: {backup_path}")
                 
                 # Clear backup path from database
                 cursor.execute('''
@@ -252,17 +264,61 @@ class BackupManager:
                     SET conversion_backup_path = NULL, updated_at = CURRENT_TIMESTAMP
                     WHERE title = ?
                 ''', (book_name,))
-                
-                conn.commit()
-                conn.close()
-                return True
             else:
-                logger.info(f"No backup found to clean up for {book_name}")
-                conn.close()
-                return True  # Not an error if no backup exists
+                logger.info(f"No backup path found in database for {book_name}, trying pattern matching...")
+                # Debug: List all backup directories
+                logger.info(f"Available backup directories:")
+                for backup_dir in self.backup_path.iterdir():
+                    if backup_dir.is_dir():
+                        logger.info(f"  - {backup_dir.name}")
+                
+                # Fallback: find backup directory by pattern matching
+                backup_found = self._cleanup_backup_by_pattern(book_name)
+                if not backup_found:
+                    logger.info(f"No backup found to clean up for {book_name}")
+            
+            # Note: toMerge files are cleaned up by folder_m4b_builder.sh after successful conversion
+            
+            # Clean up converted file from converted directory
+            converted_file = Path(f"/converted/{book_name}.m4b")
+            if converted_file.exists():
+                converted_file.unlink()
+                logger.info(f"Cleaned up converted file: {converted_file}")
+            else:
+                logger.info(f"No converted file found for {book_name}")
+            
+            conn.commit()
+            conn.close()
+            return cleanup_success
             
         except Exception as e:
-            logger.error(f"Failed to cleanup backup on tagging success: {e}")
+            logger.error(f"Failed to cleanup files on tagging success: {e}")
+            return False
+    
+    def _cleanup_backup_by_pattern(self, book_name: str) -> bool:
+        """
+        Find and clean up backup directory by pattern matching (fallback method)
+        
+        Args:
+            book_name: Name of the book
+            
+        Returns:
+            True if backup was found and cleaned up, False otherwise
+        """
+        try:
+            # Look for backup directories that start with the book name
+            for backup_folder in self.backup_path.iterdir():
+                if backup_folder.is_dir() and backup_folder.name.startswith(f"{book_name}_"):
+                    logger.info(f"Found backup directory by pattern: {backup_folder}")
+                    shutil.rmtree(backup_folder)
+                    logger.info(f"Cleaned up backup directory by pattern: {backup_folder}")
+                    return True
+            
+            logger.info(f"No backup directory found matching pattern: {book_name}_*")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Failed to cleanup backup by pattern: {e}")
             return False
     
     def list_backups(self) -> List[Dict]:

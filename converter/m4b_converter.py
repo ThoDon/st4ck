@@ -205,9 +205,7 @@ class M4BConverter:
                 timeout=CONVERSION_TIMEOUT
             )
             
-            logger.info(f"Conversion script return code: {result.returncode}")
             logger.info(f"Conversion script STDOUT:\n{result.stdout}")
-            logger.info(f"Conversion script STDERR:\n{result.stderr}")
 
             return_code = result.returncode
 
