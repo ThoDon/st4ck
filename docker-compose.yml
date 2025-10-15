@@ -219,11 +219,13 @@ services:
       start_period: 30s
 
   ui:
-    build: ./ui
+    # Build UI with API URL (set VITE_API_URL environment variable for production)
+    build:
+      context: ./ui
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8081}
     ports:
       - "8080:3000"
-    environment:
-      - VITE_API_URL=${VITE_API_URL:-http://localhost:8081}
     depends_on:
       - api
     restart: unless-stopped
