@@ -230,6 +230,25 @@ services:
       retries: 3
       start_period: 10s
 
+  # Auto M4B Ubuntu - Reference implementation for m4b-tool
+  auto-m4b-ubuntu:
+    build: ./auto-m4b-ubuntu
+    container_name: auto-m4b-ubuntu
+    volumes:
+      - ./auto-m4b-ubuntu/config:/config
+      - ${DATA_DIR:-./data}/toMerge:/temp/input
+      - ${DATA_DIR:-./data}/converted:/temp/output
+    environment:
+      TZ: America/New_York
+      PUID: "1000"
+      PGID: "1000"
+      CPU_CORES: "2"
+      SLEEPTIME: "1m"
+      MAKE_BACKUP: "N"
+    restart: unless-stopped
+    profiles:
+      - tools
+
 volumes:
   transmission-config:
   redis-data:

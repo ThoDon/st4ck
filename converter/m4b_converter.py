@@ -9,6 +9,8 @@ import sqlite3
 import logging
 import time
 import shlex
+import shutil
+import re
 from pathlib import Path
 from typing import Optional, Dict, List
 from datetime import datetime
@@ -21,6 +23,66 @@ class M4BConverter:
     
     def __init__(self):
         self.db_path = DB_PATH
+
+    def sanitize_folder_name(self, folder_name: str) -> str:
+        """
+        Sanitize folder name for m4b-tool compatibility by removing spaces and special characters
+        
+        Args:
+            folder_name: Original folder name
+            
+        Returns:
+            Sanitized folder name safe for m4b-tool
+        """
+        # Replace spaces with underscores and remove special characters
+        sanitized = re.sub(r'[^\w\-_.]', '_', folder_name)
+        # Remove multiple consecutive underscores
+        sanitized = re.sub(r'_+', '_', sanitized)
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_')
+        return sanitized
+
+    def create_temp_sanitized_directory(self, original_path: str, original_book_name: str) -> str:
+        """
+        Create a temporary sanitized directory for m4b-tool conversion
+        
+        Args:
+            original_path: Original path with spaces
+            original_book_name: Original book name for reference
+            
+        Returns:
+            Path to temporary sanitized directory
+        """
+        original_dir = Path(original_path)
+        sanitized_name = self.sanitize_folder_name(original_book_name)
+        temp_dir = Path("/tmp") / f"m4b_conversion_{sanitized_name}_{int(time.time())}"
+        
+        # Create temporary directory
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Copy all files from original directory to temp directory
+        logger.info(f"Creating temporary sanitized directory: {temp_dir}")
+        for item in original_dir.iterdir():
+            if item.is_file():
+                shutil.copy2(item, temp_dir)
+                logger.info(f"Copied {item.name} to temporary directory")
+        
+        return str(temp_dir)
+
+    def cleanup_temp_directory(self, temp_path: str):
+        """
+        Clean up temporary directory after conversion
+        
+        Args:
+            temp_path: Path to temporary directory to remove
+        """
+        try:
+            temp_dir = Path(temp_path)
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir)
+                logger.info(f"Cleaned up temporary directory: {temp_path}")
+        except Exception as e:
+            logger.warning(f"Failed to cleanup temporary directory {temp_path}: {e}")
     
     def get_db_connection(self):
         """Get database connection"""
@@ -134,7 +196,7 @@ class M4BConverter:
     
     def convert_audiobook(self, input_path: str, output_path: str, book_name: str) -> bool:
         """
-        Convert audiobook using m4b-tool
+        Convert audiobook using m4b-tool with sanitized folder names
         
         Args:
             input_path: Path to input MP3 files
@@ -144,104 +206,59 @@ class M4BConverter:
         Returns:
             True if conversion successful, False otherwise
         """
+        temp_dir = None
         try:
             input_dir = Path(input_path)
             output_dir = Path(output_path)
-            
+
             # Ensure input path exists
             if not input_dir.exists():
                 logger.error(f"Input path does not exist: {input_path}")
                 return False
-            
+
             # Ensure output directory exists
             output_dir.mkdir(parents=True, exist_ok=True)
-            
+
             # Find MP3 files
             mp3_files = self.find_mp3_files(input_path)
             if not mp3_files:
                 logger.error(f"No MP3 files found in {input_path}")
                 return False
-            
+
             total_files = len(mp3_files)
             logger.info(f"Starting conversion of {book_name} with {total_files} files")
-            
+
             # Update initial progress
             self.update_conversion_progress(
                 book_name, "converting", "Starting conversion...", 0.0, total_files, 0
             )
+
+            # Create temporary sanitized directory for m4b-tool
+            logger.info(f"Creating sanitized directory for m4b-tool compatibility")
+            temp_dir = self.create_temp_sanitized_directory(input_path, book_name)
             
-            # Build m4b-tool command with relative paths
+            # Build m4b-tool command with sanitized paths
             output_file = output_dir / f"{book_name}.m4b"
             
-            # Use absolute paths since the Docker wrapper mounts the entire root directory
-            input_absolute = input_path + "/"
+            # Use the temporary sanitized directory for input
+            input_absolute = temp_dir + "/"
             output_absolute = str(output_file)
+
+            # Use shell=True with proper quoting to ensure paths are handled correctly
+            # Force quotes around paths to ensure m4b-tool receives them properly
+            quoted_input = f'"{input_absolute}"'
+            quoted_output = f'"{output_absolute}"'
             
-            # Debug: Check if the input directory exists and what's in it
-            logger.info(f"Checking input directory: {input_path}")
-            logger.info(f"Input directory exists: {input_dir.exists()}")
-            if input_dir.exists():
-                try:
-                    files = list(input_dir.iterdir())
-                    logger.info(f"Input directory contains {len(files)} items:")
-                    for item in files:
-                        logger.info(f"  - {item.name} ({'dir' if item.is_dir() else 'file'})")
-                except Exception as e:
-                    logger.error(f"Error listing input directory: {e}")
-            
-            # Debug: Check the absolute paths that will be used
-            logger.info(f"Input absolute path: {input_absolute}")
-            logger.info(f"Output absolute path: {output_absolute}")
-            
-            # Debug: Check what's in the toMerge directory
-            test_cmd = ["bash", "-c", f"ls -la /toMerge/"]
-            result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
-            logger.info(f"toMerge directory listing return code: {result.returncode}")
-            logger.info(f"toMerge directory listing STDOUT: {result.stdout}")
-            logger.info(f"toMerge directory listing STDERR: {result.stderr}")
-            
-            # Debug: Check what's in the specific book directory
-            test_cmd2 = ["bash", "-c", f"ls -la {shlex.quote(input_absolute)}"]
-            result2 = subprocess.run(test_cmd2, capture_output=True, text=True, timeout=10)
-            logger.info(f"Book directory listing return code: {result2.returncode}")
-            logger.info(f"Book directory listing STDOUT: {result2.stdout}")
-            logger.info(f"Book directory listing STDERR: {result2.stderr}")
-            
-            # Test m4b-tool with a simple command first
-            test_cmd = ["m4b-tool", "--version"]
-            test_result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
-            logger.info(f"m4b-tool version test return code: {test_result.returncode}")
-            logger.info(f"m4b-tool version test STDOUT: {test_result.stdout}")
-            logger.info(f"m4b-tool version test STDERR: {test_result.stderr}")
-            
-            # Test if m4b-tool can see the directory
-            test_cmd2 = ["bash", "-c", f"m4b-tool merge --help | head -10"]
-            test_result2 = subprocess.run(test_cmd2, capture_output=True, text=True, timeout=10)
-            logger.info(f"m4b-tool help test return code: {test_result2.returncode}")
-            logger.info(f"m4b-tool help test STDOUT: {test_result2.stdout}")
-            
-            # Test if m4b-tool can access the directory with a simple ls command
-            test_cmd3 = ["bash", "-c", f"m4b-tool merge {shlex.quote(input_absolute)} --dry-run"]
-            test_result3 = subprocess.run(test_cmd3, capture_output=True, text=True, timeout=30)
-            logger.info(f"m4b-tool dry-run test return code: {test_result3.returncode}")
-            logger.info(f"m4b-tool dry-run test STDOUT: {test_result3.stdout}")
-            logger.info(f"m4b-tool dry-run test STDERR: {test_result3.stderr}")
-            
-            cmd = [
-                "m4b-tool", "merge",
-                input_absolute,
-                "--output-file", output_absolute,
-                "--audio-bitrate", M4B_TOOL_BITRATE,
-                "--audio-codec", M4B_TOOL_CODEC,
-                "--jobs", "1",
-                "--verbose", "3"
-            ]
-            
-            logger.info(f"Running command: {' '.join(cmd)}")
-            
+            # Change to parent directory before running m4b-tool for better path resolution
+            parent_dir = Path(input_absolute).parent
+            cmd_str = f"cd {shlex.quote(str(parent_dir))} && m4b-tool merge {quoted_input} --output-file {quoted_output} --audio-bitrate {M4B_TOOL_BITRATE} --audio-codec {M4B_TOOL_CODEC} --jobs 1 --verbose 3"
+
+            logger.info(f"Running command: {cmd_str}")
+
             # Start conversion process
             result = subprocess.run(
-                cmd,
+                cmd_str,
+                shell=True,
                 capture_output=True,
                 text=True,
                 timeout=CONVERSION_TIMEOUT
@@ -249,9 +266,9 @@ class M4BConverter:
             logger.info(f"m4b-tool return code: {result.returncode}")
             logger.info(f"m4b-tool STDOUT:\n{result.stdout}")
             logger.info(f"m4b-tool STDERR:\n{result.stderr}")
-            
+
             return_code = result.returncode
-            
+
             if return_code == 0:
                 # Check if output file was created
                 if output_file.exists():
@@ -272,13 +289,17 @@ class M4BConverter:
                     book_name, "failed", f"Process failed with code {return_code}", 0.0, total_files, 0
                 )
                 return False
-                
+
         except Exception as e:
             logger.error(f"Conversion error: {e}")
             self.update_conversion_progress(
                 book_name, "failed", str(e), 0.0, 0, 0
             )
             return False
+        finally:
+            # Always cleanup temporary directory
+            if temp_dir:
+                self.cleanup_temp_directory(temp_dir)
     
     def get_conversion_status(self, book_name: str) -> Optional[Dict]:
         """
