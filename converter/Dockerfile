@@ -1,22 +1,66 @@
-FROM python:3.11-slim
+FROM ubuntu:22.04
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    redis-tools \
+ARG TZ=America/New_York
+ENV TZ=$TZ
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install general dependencies + tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tzdata \
     curl \
     wget \
-    gnupg \
+    git \
+    unzip \
+    build-essential \
+    cmake \
+    autoconf \
+    automake \
+    libtool \
+    libglib2.0-dev \
+    pkg-config \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    gnupg \
+    lsb-release \
+    software-properties-common \
+    ffmpeg \
+    redis-tools \
+    python3 \
+    python3-pip \
+    python3-venv \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone && \
+    dpkg-reconfigure -f noninteractive tzdata
 
-# Install Docker CLI
-RUN curl -fsSL https://get.docker.com -o get-docker.sh && \
-    sh get-docker.sh && \
-    rm get-docker.sh
+# Create symlinks for python and pip (force overwrite if they exist)
+RUN ln -sf /usr/bin/python3 /usr/bin/python && \
+    ln -sf /usr/bin/pip3 /usr/bin/pip
 
-# Create alias for m4b-tool using Docker with proper volume mounting
-RUN echo '#!/bin/bash\n# m4b-tool wrapper for Docker-in-Docker\n# Mount the root directory and use absolute paths\n\ndocker run --rm -u $(id -u):$(id -g) -v /:/mnt --workdir /mnt sandreas/m4b-tool:latest "$@"' > /usr/local/bin/m4b-tool && \
-    chmod +x /usr/local/bin/m4b-tool
+# Install PHP 8.2 from Sury PPA
+RUN add-apt-repository ppa:ondrej/php -y && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    php8.2-cli \
+    php8.2-curl \
+    php8.2-mbstring \
+    php8.2-xml \
+    php8.2-zip && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Build and install libmp4v2 from sergiomb2
+RUN curl -L https://github.com/sergiomb2/libmp4v2/archive/refs/heads/master.zip -o /tmp/libmp4v2.zip && \
+    unzip -o /tmp/libmp4v2.zip -d /tmp && \
+    cd /tmp/libmp4v2-master && \
+    mkdir -p m4 && \
+    autoreconf -i && \
+    ./configure CXXFLAGS="-Wno-narrowing" && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig && \
+    rm -rf /tmp/libmp4v2*
+
+# Add m4b-tool
+COPY m4b-tool.phar /usr/local/bin/m4b-tool
+RUN chmod +x /usr/local/bin/m4b-tool
 
 # Set working directory
 WORKDIR /app
@@ -27,6 +71,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
+
+# Make conversion script executable
+RUN chmod +x folder_m4b_builder.sh
 
 # Create output directory and ensure permissions
 RUN mkdir -p /converted && \

@@ -8,13 +8,11 @@ import subprocess
 import sqlite3
 import logging
 import time
-import shlex
-import shutil
-import re
 from pathlib import Path
 from typing import Optional, Dict, List
 from datetime import datetime
-from config import DB_PATH, M4B_TOOL_BITRATE, M4B_TOOL_CODEC, CONVERSION_TIMEOUT
+from config import DB_PATH, CONVERSION_TIMEOUT
+from audio_utils import AudioUtils
 
 logger = logging.getLogger(__name__)
 
@@ -24,65 +22,6 @@ class M4BConverter:
     def __init__(self):
         self.db_path = DB_PATH
 
-    def sanitize_folder_name(self, folder_name: str) -> str:
-        """
-        Sanitize folder name for m4b-tool compatibility by removing spaces and special characters
-        
-        Args:
-            folder_name: Original folder name
-            
-        Returns:
-            Sanitized folder name safe for m4b-tool
-        """
-        # Replace spaces with underscores and remove special characters
-        sanitized = re.sub(r'[^\w\-_.]', '_', folder_name)
-        # Remove multiple consecutive underscores
-        sanitized = re.sub(r'_+', '_', sanitized)
-        # Remove leading/trailing underscores
-        sanitized = sanitized.strip('_')
-        return sanitized
-
-    def create_temp_sanitized_directory(self, original_path: str, original_book_name: str) -> str:
-        """
-        Create a temporary sanitized directory for m4b-tool conversion
-        
-        Args:
-            original_path: Original path with spaces
-            original_book_name: Original book name for reference
-            
-        Returns:
-            Path to temporary sanitized directory
-        """
-        original_dir = Path(original_path)
-        sanitized_name = self.sanitize_folder_name(original_book_name)
-        temp_dir = Path("/tmp") / f"m4b_conversion_{sanitized_name}_{int(time.time())}"
-        
-        # Create temporary directory
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Copy all files from original directory to temp directory
-        logger.info(f"Creating temporary sanitized directory: {temp_dir}")
-        for item in original_dir.iterdir():
-            if item.is_file():
-                shutil.copy2(item, temp_dir)
-                logger.info(f"Copied {item.name} to temporary directory")
-        
-        return str(temp_dir)
-
-    def cleanup_temp_directory(self, temp_path: str):
-        """
-        Clean up temporary directory after conversion
-        
-        Args:
-            temp_path: Path to temporary directory to remove
-        """
-        try:
-            temp_dir = Path(temp_path)
-            if temp_dir.exists():
-                shutil.rmtree(temp_dir)
-                logger.info(f"Cleaned up temporary directory: {temp_path}")
-        except Exception as e:
-            logger.warning(f"Failed to cleanup temporary directory {temp_path}: {e}")
     
     def get_db_connection(self):
         """Get database connection"""
@@ -196,7 +135,7 @@ class M4BConverter:
     
     def convert_audiobook(self, input_path: str, output_path: str, book_name: str) -> bool:
         """
-        Convert audiobook using m4b-tool with sanitized folder names
+        Convert audiobook using m4b-tool with auto-m4b-ubuntu approach
         
         Args:
             input_path: Path to input MP3 files
@@ -206,7 +145,6 @@ class M4BConverter:
         Returns:
             True if conversion successful, False otherwise
         """
-        temp_dir = None
         try:
             input_dir = Path(input_path)
             output_dir = Path(output_path)
@@ -228,51 +166,82 @@ class M4BConverter:
             total_files = len(mp3_files)
             logger.info(f"Starting conversion of {book_name} with {total_files} files")
 
+            # Calculate source total duration before conversion
+            logger.info("Calculating source total duration...")
+            source_total_duration = AudioUtils.calculate_total_duration(mp3_files)
+            
+            if source_total_duration is None:
+                logger.warning("Could not calculate source duration, proceeding without validation")
+            else:
+                logger.info(f"Source total duration: {AudioUtils.format_duration(source_total_duration)}")
+
             # Update initial progress
             self.update_conversion_progress(
                 book_name, "converting", "Starting conversion...", 0.0, total_files, 0
             )
 
-            # Create temporary sanitized directory for m4b-tool
-            logger.info(f"Creating sanitized directory for m4b-tool compatibility")
-            temp_dir = self.create_temp_sanitized_directory(input_path, book_name)
+            # Use the folder_m4b_builder.sh script (auto-m4b-ubuntu approach)
+            script_path = Path(__file__).parent / "folder_m4b_builder.sh"
             
-            # Build m4b-tool command with sanitized paths
-            output_file = output_dir / f"{book_name}.m4b"
-            
-            # Use the temporary sanitized directory for input
-            input_absolute = temp_dir + "/"
-            output_absolute = str(output_file)
+            if not script_path.exists():
+                logger.error(f"Conversion script not found: {script_path}")
+                return False
 
-            # Use shell=True with proper quoting to ensure paths are handled correctly
-            # Force quotes around paths to ensure m4b-tool receives them properly
-            quoted_input = f'"{input_absolute}"'
-            quoted_output = f'"{output_absolute}"'
-            
-            # Change to parent directory before running m4b-tool for better path resolution
-            parent_dir = Path(input_absolute).parent
-            cmd_str = f"cd {shlex.quote(str(parent_dir))} && m4b-tool merge {quoted_input} --output-file {quoted_output} --audio-bitrate {M4B_TOOL_BITRATE} --audio-codec {M4B_TOOL_CODEC} --jobs 1 --verbose 3"
+            # Build command to run the conversion script
+            cmd = [
+                str(script_path),
+                str(input_dir),
+                str(output_dir),
+                book_name
+            ]
 
-            logger.info(f"Running command: {cmd_str}")
+            logger.info(f"Running conversion script: {' '.join(cmd)}")
 
             # Start conversion process
             result = subprocess.run(
-                cmd_str,
-                shell=True,
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=CONVERSION_TIMEOUT
             )
-            logger.info(f"m4b-tool return code: {result.returncode}")
-            logger.info(f"m4b-tool STDOUT:\n{result.stdout}")
-            logger.info(f"m4b-tool STDERR:\n{result.stderr}")
+            
+            logger.info(f"Conversion script return code: {result.returncode}")
+            logger.info(f"Conversion script STDOUT:\n{result.stdout}")
+            logger.info(f"Conversion script STDERR:\n{result.stderr}")
 
             return_code = result.returncode
 
             if return_code == 0:
                 # Check if output file was created
+                output_file = output_dir / f"{book_name}.m4b"
                 if output_file.exists():
                     logger.info(f"Conversion completed successfully: {output_file}")
+                    
+                    # Validate duration if we have source duration
+                    duration_validation_passed = None
+                    if source_total_duration is not None:
+                        logger.info("Validating converted file duration...")
+                        converted_duration = AudioUtils.get_audio_duration(str(output_file))
+                        
+                        if converted_duration is not None:
+                            is_valid, message = AudioUtils.validate_conversion_duration(
+                                source_total_duration, converted_duration
+                            )
+                            duration_validation_passed = is_valid
+                            logger.info(f"Duration validation: {message}")
+                            
+                            if not is_valid:
+                                logger.warning(f"Duration validation failed: {message}")
+                        else:
+                            logger.warning("Could not get converted file duration for validation")
+                    
+                    # Update conversion job with duration information
+                    self._update_conversion_job_duration(
+                        book_name, source_total_duration, 
+                        AudioUtils.get_audio_duration(str(output_file)) if output_file.exists() else None,
+                        duration_validation_passed
+                    )
+                    
                     self.update_conversion_progress(
                         book_name, "completed", None, 100.0, total_files, total_files
                     )
@@ -296,10 +265,6 @@ class M4BConverter:
                 book_name, "failed", str(e), 0.0, 0, 0
             )
             return False
-        finally:
-            # Always cleanup temporary directory
-            if temp_dir:
-                self.cleanup_temp_directory(temp_dir)
     
     def get_conversion_status(self, book_name: str) -> Optional[Dict]:
         """
@@ -341,3 +306,49 @@ class M4BConverter:
         except Exception as e:
             logger.error(f"Failed to get conversion status: {e}")
             return None
+    
+    def _update_conversion_job_duration(self, book_name: str, source_duration: Optional[float], 
+                                      converted_duration: Optional[float], 
+                                      validation_passed: Optional[bool]):
+        """
+        Update conversion job with duration information
+        
+        Args:
+            book_name: Name of the book
+            source_duration: Source total duration in seconds
+            converted_duration: Converted file duration in seconds
+            validation_passed: Whether duration validation passed
+        """
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                conn = self.get_db_connection()
+                cursor = conn.cursor()
+                
+                # Update the most recent conversion job for this book
+                cursor.execute('''
+                    UPDATE conversion_jobs 
+                    SET source_total_duration_seconds = ?, 
+                        converted_duration_seconds = ?, 
+                        duration_validation_passed = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE book_name = ? 
+                    ORDER BY created_at DESC 
+                    LIMIT 1
+                ''', (source_duration, converted_duration, validation_passed, book_name))
+                
+                conn.commit()
+                conn.close()
+                return  # Success, exit retry loop
+                
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    logger.warning(f"Database locked, retrying in 1 second (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(1)
+                    continue
+                else:
+                    logger.error(f"Failed to update conversion job duration after {max_retries} attempts: {e}")
+                    break
+            except Exception as e:
+                logger.error(f"Failed to update conversion job duration: {e}")
+                break

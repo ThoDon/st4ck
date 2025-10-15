@@ -222,6 +222,49 @@ class BackupManager:
             logger.error(f"Failed to cleanup old backups: {e}")
             return False
     
+    def cleanup_backup_on_tagging_success(self, book_name: str) -> bool:
+        """
+        Clean up backup after successful tagging (allows for quality validation)
+        
+        Args:
+            book_name: Name of the book
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            conn = self.get_db_connection()
+            cursor = conn.cursor()
+            
+            # Get backup path
+            cursor.execute('SELECT conversion_backup_path FROM rss_items WHERE title = ?', (book_name,))
+            result = cursor.fetchone()
+            
+            if result and result[0]:
+                backup_path = Path(result[0])
+                if backup_path.exists():
+                    shutil.rmtree(backup_path)
+                    logger.info(f"Cleaned up backup after successful tagging: {backup_path}")
+                
+                # Clear backup path from database
+                cursor.execute('''
+                    UPDATE rss_items 
+                    SET conversion_backup_path = NULL, updated_at = CURRENT_TIMESTAMP
+                    WHERE title = ?
+                ''', (book_name,))
+                
+                conn.commit()
+                conn.close()
+                return True
+            else:
+                logger.info(f"No backup found to clean up for {book_name}")
+                conn.close()
+                return True  # Not an error if no backup exists
+            
+        except Exception as e:
+            logger.error(f"Failed to cleanup backup on tagging success: {e}")
+            return False
+    
     def list_backups(self) -> List[Dict]:
         """
         List all backups with metadata

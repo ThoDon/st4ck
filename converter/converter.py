@@ -150,8 +150,8 @@ class ConverterService:
                 if rss_item_id:
                     self._publish_conversion_complete(book_name, rss_item_id)
                 
-                # Clean up old backups if retention limit reached
-                self.backup_manager.cleanup_old_backups(book_name)
+                # Note: Backup cleanup is now handled by tagger service after successful tagging
+                # This allows for duration validation and quality checks before cleanup
             else:
                 # Publish conversion failed event
                 if rss_item_id:

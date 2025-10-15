@@ -783,9 +783,9 @@ async def tag_file_with_metadata(request: TagFileRequest):
             logger.error(f"File not found: {file_path}")
             raise HTTPException(status_code=404, detail="File not found")
         
-        # Create directories
-        library_dir = Path("/app/library")
-        covers_dir = Path("/app/covers")
+        # Create directories with environment variable support
+        library_dir = Path(os.getenv("LIBRARY_PATH", "/app/library"))
+        covers_dir = Path(os.getenv("COVERS_PATH", "/app/data/covers"))
         logger.info(f"Library dir: {library_dir}, Covers dir: {covers_dir}")
         
         # Initialize tagger
@@ -830,6 +830,26 @@ async def tag_file_with_metadata(request: TagFileRequest):
                 conn.close()
                 
                 log_to_db("INFO", f"Successfully tagged and moved file: {file_path.name}")
+                
+                # Clean up conversion backup after successful tagging
+                try:
+                    # Import backup manager from converter service
+                    import sys
+                    converter_path = '/app/converter'
+                    if converter_path not in sys.path:
+                        sys.path.insert(0, converter_path)
+                    from backup_manager import BackupManager
+                    
+                    # Extract book name from file path for backup cleanup
+                    book_name = file_path.stem  # Remove .m4b extension
+                    backup_manager = BackupManager()
+                    if backup_manager.cleanup_backup_on_tagging_success(book_name):
+                        log_to_db("INFO", f"Cleaned up conversion backup for: {book_name}")
+                    else:
+                        log_to_db("WARNING", f"Failed to clean up conversion backup for: {book_name}")
+                except Exception as e:
+                    log_to_db("WARNING", f"Could not clean up conversion backup: {e}")
+                
                 return {
                     "message": "File tagged and moved successfully",
                     "destination": str(dest_path)

@@ -118,11 +118,14 @@ services:
       - ${DATA_DIR:-./data}/toMerge:/app/toMerge
       - ${DATA_DIR:-./data}/converted:/app/converted
       - ${DATA_DIR:-./data}/conversion-backups:/app/conversion-backups
-      - ${LIBRARY_DIR:-${DATA_DIR:-./data}}:/app/library
+      - ${LIBRARY_DIR:-${DATA_DIR:-./data}/library}:/app/library
       - ${DATA_DIR:-./data}/saved-torrents-files:/app/saved-torrents-files
       - ${DATA_DIR:-./data}/toTag:/app/toTag
-      - ${DATA_DIR:-./data}/covers:/app/covers
+      - ${DATA_DIR:-./data}/covers:/app/data/covers
+      - ./converter:/app/converter
     environment:
+      - LIBRARY_PATH=/app/library
+      - COVERS_PATH=/app/data/covers
       - DB_PATH=/app/db/rss.sqlite
       - REDIS_HOST=redis
       - REDIS_PORT=6379

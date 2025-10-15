@@ -114,6 +114,9 @@ def init_database():
             started_at TIMESTAMP,
             completed_at TIMESTAMP,
             error_message TEXT,
+            source_total_duration_seconds REAL,
+            converted_duration_seconds REAL,
+            duration_validation_passed BOOLEAN DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (rss_item_id) REFERENCES rss_items (id)
