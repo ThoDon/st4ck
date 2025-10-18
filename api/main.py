@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -45,7 +45,7 @@ TRANSMISSION_HOST = os.getenv("TRANSMISSION_HOST", "transmission")
 TRANSMISSION_PORT = os.getenv("TRANSMISSION_PORT", "9091")
 TRANSMISSION_USER = os.getenv("TRANSMISSION_USER", "admin")
 TRANSMISSION_PASS = os.getenv("TRANSMISSION_PASS", "admin")
-# AUTO_M4B_TAGGER_URL removed - functionality integrated into API
+YGG_GATEWAY_URL = os.getenv("YGG_GATEWAY_URL", "http://ygg-gateway:8000")
 
 # Pydantic models
 class RSSItem(BaseModel):
@@ -172,7 +172,7 @@ class ConversionTracking(BaseModel):
 
 class ConversionJob(BaseModel):
     id: int
-    rss_item_id: Optional[int]
+    ygg_torrent_id: Optional[int]
     book_name: str
     source_path: str
     backup_path: Optional[str]
@@ -188,7 +188,7 @@ class ConversionJob(BaseModel):
 class ConversionTriggerRequest(BaseModel):
     book_name: str
     source_path: str
-    rss_item_id: Optional[int] = None
+    ygg_torrent_id: Optional[int] = None
 
 class ConversionRetryRequest(BaseModel):
     force: bool = False
@@ -366,7 +366,9 @@ async def root():
         "message": "Audiobook Pipeline API",
         "version": "1.0.0",
         "endpoints": {
-            "rss_items": "/rss-items",
+            "ygg_search": "/ygg/search",
+            "ygg_categories": "/ygg/categories",
+            "ygg_add_torrent": "/ygg/torrent/add",
             "downloads": "/downloads", 
             "torrents": "/torrents",
             "tagging": "/tagging",
@@ -378,84 +380,6 @@ async def root():
         }
     }
 
-
-@app.get("/rss-items", response_model=List[RSSItem])
-async def get_rss_items():
-    """Get all RSS items with download status"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        # Join with downloads table to get download status
-        cursor.execute('''
-            SELECT r.*, d.status as download_status, d.created_at as download_date
-            FROM rss_items r
-            LEFT JOIN downloads d ON r.id = d.rss_item_id
-        ''')
-        items = []
-        for row in cursor.fetchall():
-            # Debug: Log row length to help troubleshoot
-            logger.debug(f"RSS item row has {len(row)} columns")
-            # Convert timestamps to ISO format strings
-            def format_timestamp(timestamp):
-                if timestamp is None:
-                    return None
-                if isinstance(timestamp, (int, float)):
-                    # Unix timestamp
-                    return datetime.fromtimestamp(timestamp).isoformat()
-                elif isinstance(timestamp, str):
-                    # Already a string, return as-is
-                    return timestamp
-                else:
-                    return str(timestamp)
-            
-            # Create RSSItem with download status
-            # rss_items table has 19 columns (0-18), downloads adds 2 more (19-20)
-            try:
-                rss_item = RSSItem(
-                    id=row[0],
-                    title=row[1],
-                    link=row[2],
-                    pub_date=row[3],
-                    description=row[4],
-                    author=row[5],
-                    year=row[6],
-                    format=row[7],
-                    file_size=row[8],
-                    seeders=row[9],
-                    leechers=row[10],
-                    torrent_url=row[11],
-                    status=row[12],
-                    created_at=format_timestamp(row[17]) or datetime.now(timezone.utc).isoformat(),
-                    updated_at=format_timestamp(row[18]) or datetime.now(timezone.utc).isoformat(),
-                    download_status=row[19] if len(row) > 19 and row[19] else 'not_downloaded',
-                    download_date=format_timestamp(row[20]) if len(row) > 20 and row[20] else None
-                )
-            except IndexError as e:
-                logger.error(f"Index error processing RSS item row with {len(row)} columns: {e}")
-                logger.error(f"Row data: {row}")
-                # Skip this row and continue with the next one
-                continue
-            items.append(rss_item)
-        
-        # Sort items by publication date (newer first)
-        def parse_pub_date(pub_date_str):
-            if not pub_date_str:
-                return datetime.min
-            try:
-                # All dates are stored in RFC 2822 format
-                from email.utils import parsedate_to_datetime
-                return parsedate_to_datetime(pub_date_str)
-            except (ValueError, TypeError) as e:
-                logger.warning(f"Failed to parse pub_date '{pub_date_str}': {e}")
-                return datetime.min
-        
-        items.sort(key=lambda x: parse_pub_date(x.pub_date), reverse=True)
-        conn.close()
-        return items
-    except Exception as e:
-        logger.error(f"Error fetching RSS items: {e}")
-        log_to_db("ERROR", f"Error fetching RSS items: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/downloads", response_model=List[Download])
 async def get_downloads():
@@ -990,6 +914,36 @@ class ExternalLogRequest(BaseModel):
     message: str
     service: Optional[str] = "external"
 
+# YGG Gateway models
+class YGGSearchRequest(BaseModel):
+    query: str
+    category: Optional[str] = None
+    limit: Optional[int] = 50
+
+class YGGTorrent(BaseModel):
+    id: int
+    title: str
+    category_id: int
+    size: int
+    seeders: int
+    leechers: int
+    downloads: Optional[int] = None
+    uploaded_at: str
+    link: str
+    slug: Optional[str] = None  # deprecated field
+
+class YGGSearchResponse(BaseModel):
+    torrents: List[YGGTorrent]
+    total: int
+    page: int
+    per_page: int
+
+# Categories models removed - YGG API doesn't provide categories
+
+class TorrentAddRequest(BaseModel):
+    torrent_id: str
+    download_type: str = "magnet"  # "magnet" or "torrent"
+
 @app.post("/logs/external")
 async def log_external(request: ExternalLogRequest):
     """Log a message from external services"""
@@ -1073,7 +1027,7 @@ async def trigger_conversion(request: ConversionTriggerRequest):
         message = {
             "book_name": request.book_name,
             "path": request.source_path,
-            "rss_item_id": request.rss_item_id
+            "ygg_torrent_id": request.ygg_torrent_id
         }
         
         publish_redis_event("audiobook:download_complete", message)
@@ -1122,7 +1076,7 @@ async def retry_conversion(conversion_id: int, request: ConversionRetryRequest):
         # Publish retry event
         message = {
             "book_name": book_name,
-            "rss_item_id": job[1] if job else None,  # rss_item_id from job if available
+            "ygg_torrent_id": job[1] if job else None,  # ygg_torrent_id from job if available
             "conversion_id": conversion_id
         }
         
@@ -1182,7 +1136,7 @@ async def get_conversion_jobs():
         for row in cursor.fetchall():
             jobs.append(ConversionJob(
                 id=row[0],
-                rss_item_id=row[1],
+                ygg_torrent_id=row[1],
                 book_name=row[2],
                 source_path=row[3],
                 backup_path=row[4],
@@ -1321,6 +1275,127 @@ async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
+# YGG Gateway integration endpoints
+@app.post("/ygg/search", response_model=YGGSearchResponse)
+async def search_ygg_torrents(request: YGGSearchRequest):
+    """Search for torrents using YGG Gateway"""
+    try:
+        logger.info(f"Searching YGG for: '{request.query}' in category: {request.category}")
+        
+        # Forward request to YGG Gateway
+        response = requests.post(
+            f"{YGG_GATEWAY_URL}/search",
+            json=request.model_dump(),
+            timeout=30
+        )
+        response.raise_for_status()
+        
+        result = response.json()
+        log_to_db("INFO", f"YGG search performed: '{request.query}' - {result.get('total', 0)} results")
+        
+        return YGGSearchResponse(**result)
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"YGG Gateway error: {e}")
+        log_to_db("ERROR", f"YGG Gateway error: {e}")
+        raise HTTPException(status_code=500, detail=f"YGG Gateway error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Search error: {e}")
+        log_to_db("ERROR", f"Search error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/ygg/search", response_model=YGGSearchResponse)
+async def search_ygg_torrents_get(
+    q: str = Query(..., description="Search query"),
+    category: Optional[str] = Query(None, description="Category filter"),
+    limit: int = Query(50, description="Number of results per page"),
+    page: int = Query(1, description="Page number")
+):
+    """Search for torrents using YGG Gateway (GET endpoint)"""
+    request = YGGSearchRequest(query=q, category=category, limit=limit)
+    return await search_ygg_torrents(request)
+
+@app.post("/ygg/torrent/add")
+async def add_ygg_torrent_to_transmission(request: TorrentAddRequest):
+    """Add a YGG torrent to Transmission"""
+    try:
+        logger.info(f"Adding YGG torrent {request.torrent_id} to Transmission")
+        
+        # Get download link from YGG Gateway
+        response = requests.post(
+            f"{YGG_GATEWAY_URL}/torrent/{request.torrent_id}/download",
+            json={"torrent_id": request.torrent_id, "download_type": request.download_type},
+            timeout=30
+        )
+        response.raise_for_status()
+        
+        download_info = response.json()
+        
+        logger.info(f"Download info received: {list(download_info.keys())}")
+        
+        if not download_info.get("success"):
+            raise HTTPException(status_code=400, detail="Failed to get download link from YGG")
+        
+        # Add to Transmission
+        if download_info.get("torrent_content"):
+            # Use the torrent file content directly
+            import base64
+            logger.info(f"Using torrent content, length: {len(download_info['torrent_content'])}")
+            result = transmission_rpc("torrent-add", {
+                "metainfo": download_info["torrent_content"],
+                "download-dir": "/downloads"
+            })
+        elif request.download_type == "magnet" and download_info.get("magnet_url"):
+            # Add magnet link to Transmission
+            result = transmission_rpc("torrent-add", {
+                "filename": download_info["magnet_url"],
+                "download-dir": "/downloads"
+            })
+        elif request.download_type == "torrent" and download_info.get("download_url"):
+            # Download torrent file and add to Transmission
+            torrent_response = requests.get(download_info["download_url"], timeout=30)
+            torrent_response.raise_for_status()
+            
+            import base64
+            result = transmission_rpc("torrent-add", {
+                "metainfo": base64.b64encode(torrent_response.content).decode('utf-8'),
+                "download-dir": "/downloads"
+            })
+        else:
+            raise HTTPException(status_code=400, detail="No valid download link available")
+        
+        if result.get("result") == "success":
+            log_to_db("INFO", f"Added YGG torrent {request.torrent_id} to Transmission")
+            return {
+                "message": f"YGG torrent {request.torrent_id} added to Transmission successfully",
+                "torrent_id": request.torrent_id,
+                "transmission_result": result
+            }
+        else:
+            raise HTTPException(status_code=400, detail=f"Failed to add torrent to Transmission: {result}")
+            
+    except requests.exceptions.RequestException as e:
+        logger.error(f"YGG Gateway download error: {e}")
+        log_to_db("ERROR", f"YGG Gateway download error: {e}")
+        
+        # Check if it's a specific HTTP error
+        if hasattr(e, 'response') and e.response is not None:
+            status_code = e.response.status_code
+            if status_code == 422:
+                raise HTTPException(status_code=422, detail=f"Torrent {request.torrent_id} is not available for download. It may have been removed or is not accessible.")
+            elif status_code == 404:
+                raise HTTPException(status_code=404, detail=f"Torrent {request.torrent_id} not found.")
+            else:
+                raise HTTPException(status_code=500, detail=f"YGG Gateway error: {str(e)}")
+        else:
+            raise HTTPException(status_code=500, detail=f"YGG Gateway error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error adding YGG torrent: {e}")
+        logger.error(f"Exception type: {type(e).__name__}")
+        logger.error(f"Exception details: {repr(e)}")
+        log_to_db("ERROR", f"Error adding YGG torrent: {e}")
+        raise HTTPException(status_code=500, detail=f"Error adding torrent: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     import logging.config
@@ -1374,3 +1449,4 @@ if __name__ == "__main__":
         port=8000,
         log_config=logging_config
     )
+

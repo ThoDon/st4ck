@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  rssService,
   torrentService,
   taggingService,
   conversionService,
@@ -16,14 +15,7 @@ export const QUERY_KEYS = {
   LOGS: ["logs"],
 } as const;
 
-// RSS Items hook
-export const useRSSItems = () => {
-  return useQuery({
-    queryKey: QUERY_KEYS.RSS_ITEMS,
-    queryFn: rssService.getRSSItems,
-    refetchInterval: 30000, // Refetch every 30 seconds
-  });
-};
+
 
 // Torrents hook
 export const useTorrents = () => {

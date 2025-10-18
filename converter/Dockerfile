@@ -72,8 +72,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Make conversion script executable
-RUN chmod +x folder_m4b_builder.sh
+# Make conversion script executable and fix line endings
+RUN chmod +x folder_m4b_builder.sh && \
+    sed -i 's/\r$//' folder_m4b_builder.sh
 
 # Create output directory and ensure permissions
 RUN mkdir -p /converted && \

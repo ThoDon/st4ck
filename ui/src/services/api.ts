@@ -2,7 +2,6 @@ import axios from "axios";
 import {
   Download,
   LogEntry,
-  RSSItem,
   TaggingItem,
   TorrentInfo,
 } from "../shared/types/api";
@@ -29,12 +28,7 @@ const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-export const rssService = {
-  async getRSSItems(): Promise<RSSItem[]> {
-    const response = await api.get("/rss-items");
-    return response.data;
-  },
-};
+
 
 export const downloadService = {
   async getDownloads(): Promise<Download[]> {
@@ -180,6 +174,53 @@ export const conversionService = {
   async getRedisStatus(): Promise<any> {
     const response = await api.get("/system/redis/status");
     return response.data;
+  },
+};
+
+// YGG Gateway service
+export interface YGGTorrent {
+  id: number;
+  title: string;
+  category_id: number;
+  size: number;
+  seeders: number;
+  leechers: number;
+  downloads?: number;
+  uploaded_at: string;
+  link: string;
+  slug?: string; // deprecated field
+}
+
+export interface YGGSearchResponse {
+  torrents: YGGTorrent[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+// Categories interfaces removed - YGG API doesn't provide categories
+
+export const yggService = {
+  async searchTorrents(query: string, category?: string, limit: number = 100, page: number = 1): Promise<YGGSearchResponse> {
+    const params = new URLSearchParams({
+      q: query,
+      limit: limit.toString(),
+      page: page.toString(),
+    });
+    
+    if (category) {
+      params.append('category', category);
+    }
+    
+    const response = await api.get(`/ygg/search?${params.toString()}`);
+    return response.data;
+  },
+
+  async addTorrentToTransmission(torrentId: string, downloadType: string = "magnet"): Promise<void> {
+    await api.post("/ygg/torrent/add", {
+      torrent_id: torrentId,
+      download_type: downloadType,
+    });
   },
 };
 

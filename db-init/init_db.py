@@ -18,44 +18,6 @@ def init_database():
     cursor.execute("PRAGMA cache_size=10000")
     cursor.execute("PRAGMA temp_store=MEMORY")
     
-    # Create RSS items table with extended lifecycle states
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS rss_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            link TEXT UNIQUE NOT NULL,
-            pub_date TEXT,
-            description TEXT,
-            author TEXT,
-            year TEXT,
-            format TEXT,
-            file_size TEXT,
-            seeders INTEGER DEFAULT 0,
-            leechers INTEGER DEFAULT 0,
-            torrent_url TEXT,
-            status TEXT DEFAULT 'new',
-            conversion_attempts INTEGER DEFAULT 0,
-            conversion_backup_path TEXT,
-            last_error TEXT,
-            retry_count INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Create downloads table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS downloads (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            rss_item_id INTEGER,
-            status TEXT DEFAULT 'pending',
-            path TEXT,
-            torrent_file TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (rss_item_id) REFERENCES rss_items (id)
-        )
-    ''')
     
     # Create logs table
     cursor.execute('''
@@ -100,41 +62,35 @@ def init_database():
         )
     ''')
     
-    # Create conversion_jobs table for detailed job tracking
+    # Create conversion_jobs table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS conversion_jobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            rss_item_id INTEGER,
+            ygg_torrent_id INTEGER,
             book_name TEXT NOT NULL,
             source_path TEXT NOT NULL,
             backup_path TEXT,
-            status TEXT DEFAULT 'queued',
+            status TEXT DEFAULT 'pending',
             attempts INTEGER DEFAULT 0,
             max_attempts INTEGER DEFAULT 3,
             started_at TIMESTAMP,
             completed_at TIMESTAMP,
             error_message TEXT,
-            source_total_duration_seconds REAL,
-            converted_duration_seconds REAL,
-            duration_validation_passed BOOLEAN DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (rss_item_id) REFERENCES rss_items (id)
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     
+    
     # Create indexes
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_rss_items_link ON rss_items(link)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_rss_items_pub_date ON rss_items(pub_date)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_rss_items_status ON rss_items(status)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_tagging_items_status ON tagging_items(status)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_tagging_items_created_at ON tagging_items(created_at)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversion_tracking_status ON conversion_tracking(status)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversion_tracking_created_at ON conversion_tracking(created_at)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversion_jobs_status ON conversion_jobs(status)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversion_jobs_rss_item_id ON conversion_jobs(rss_item_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversion_jobs_created_at ON conversion_jobs(created_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversion_jobs_book_name ON conversion_jobs(book_name)')
     
     conn.commit()
     conn.close()

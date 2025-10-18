@@ -42,21 +42,18 @@ services:
       retries: 3
       start_period: 30s
 
-  rss-worker:
-    build: ./rss-worker
-    volumes:
-      - ${DATA_DIR:-./data}/saved-torrents-files:/app/saved-torrents-files
-      - ${DATA_DIR:-./data}/db:/app/db
+  ygg-gateway:
+    build: ./ygg-gateway
+    container_name: ygg-gateway
     environment:
-      - RSS_FEED_URL=${RSS_FEED_URL:-https://example.com/feed.xml}
-      - DB_PATH=/app/db/rss.sqlite
+      - YGG_API_BASE_URL=${YGG_API_BASE_URL:-https://yggapi.eu}
+      - YGG_API_KEY=${YGG_API_KEY:-}
     depends_on:
       - dir-init
-      - db-init
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "worker.py"]
-      interval: 60s
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -104,7 +101,7 @@ services:
       - redis
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "mover.sh"]
+      test: ["CMD", "sh", "-c", "ps aux | grep -v grep | grep mover"]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -166,12 +163,14 @@ services:
       - TRANSMISSION_PORT=9091
       - TRANSMISSION_USER=admin
       - TRANSMISSION_PASS=admin
+      - YGG_GATEWAY_URL=http://ygg-gateway:8000
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
     depends_on:
       - dir-init
       - transmission
       - db-init
       - redis
+      - ygg-gateway
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
