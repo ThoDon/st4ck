@@ -67,8 +67,8 @@ const TaggingModal: React.FC<TaggingModalProps> = ({
   }, [filenameData, searchQuery]);
 
   const tagFileMutation = useMutation({
-    mutationFn: (bookData: AudibleBook) =>
-      taggingService.tagFile(item.path, bookData),
+    mutationFn: ({ asin }: { asin: string; }) =>
+      taggingService.tagFileByAsin(item.path, asin, "fr"),
     onSuccess: () => {
       onSuccess();
       onClose();
@@ -107,7 +107,7 @@ const TaggingModal: React.FC<TaggingModalProps> = ({
 
   const handleTagFile = () => {
     if (selectedBook) {
-      tagFileMutation.mutate(selectedBook);
+      tagFileMutation.mutate({ asin: selectedBook.asin });
     }
   };
 
@@ -214,11 +214,10 @@ const TaggingModal: React.FC<TaggingModalProps> = ({
                 {searchResults.map((book) => (
                   <div
                     key={book.asin}
-                    className={`p-4 border rounded-lg cursor-pointer transition-colors ${
-                      selectedBook?.asin === book.asin
+                    className={`p-4 border rounded-lg cursor-pointer transition-colors ${selectedBook?.asin === book.asin
                         ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20"
                         : "border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500"
-                    }`}
+                      }`}
                     onClick={() => setSelectedBook(book)}
                   >
                     <div className="flex space-x-4">

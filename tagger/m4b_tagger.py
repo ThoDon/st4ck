@@ -9,7 +9,16 @@ import shutil
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Any, Union
+
+# Prefer importing our Pydantic model; fall back gracefully if not available in path
+try:
+    from types import AudibleProduct  # type: ignore
+except Exception:
+    try:
+        from .types import AudibleProduct  # type: ignore
+    except Exception:
+        AudibleProduct = Any  # type: ignore
 from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm
 
 from constants import TagConstants
@@ -27,10 +36,13 @@ class M4BTagger:
         self.library_dir.mkdir(exist_ok=True)
         self.covers_dir.mkdir(exist_ok=True)
     
-    def tag_file(self, file_path: Path, book_data: Dict, cover_path: Optional[str] = None) -> bool:
+    def tag_file(self, file_path: Path, book_data: Union[Dict, AudibleProduct], cover_path: Optional[str] = None) -> bool:
         """Tag an M4B file with book metadata"""
         try:
             logger.info(f"Tagging file: {file_path}")
+            # Normalize input to dict if a model is provided
+            if not isinstance(book_data, dict):
+                book_data = self._to_metadata_dict(book_data)
             
             # Load the M4B file
             audio = MP4(file_path)
@@ -187,9 +199,11 @@ class M4BTagger:
         
         return None
     
-    def move_to_library(self, file_path: Path, book_data: Dict, cover_path: Optional[str] = None) -> Optional[Path]:
+    def move_to_library(self, file_path: Path, book_data: Union[Dict, AudibleProduct], cover_path: Optional[str] = None) -> Optional[Path]:
         """Move tagged file to library with organized structure"""
         try:
+            if not isinstance(book_data, dict):
+                book_data = self._to_metadata_dict(book_data)
             # Create organized directory structure
             author = self._clean_filename(book_data.get("author", "Unknown Author"))
             title = self._clean_filename(book_data.get("title", "Unknown Title"))
@@ -312,8 +326,6 @@ class M4BTagger:
         {publisher_info}
         <dc:language>{language}</dc:language>
         <dc:description>{description}</dc:description>
-        <dc:subject>Fiction</dc:subject>
-        <dc:subject>Audiobook</dc:subject>
         {self._build_subject_tags(metadata)}
         {date_info}
         <dc:identifier opf:scheme="ASIN">{identifier}</dc:identifier>
@@ -406,6 +418,8 @@ class M4BTagger:
     def _build_subject_tags(self, metadata: Dict) -> str:
         """Build subject tags from metadata"""
         subjects = []
+
+        logger.info(f"Building subject tags for metadata: {metadata}")
         
         # Add genre if available
         if metadata.get("genre"):
@@ -440,6 +454,88 @@ class M4BTagger:
             return str(value)
         else:
             return str(value)
+
+    def _to_metadata_dict(self, product: AudibleProduct) -> Dict:
+        """Convert an AudibleProduct-like model into a flat metadata dict used by tagger and OPF."""
+        try:
+            asin = getattr(product, "asin", None)
+            title = getattr(product, "title", "") or ""
+
+            # Authors -> single string, excluding translators if possible
+            authors = getattr(product, "authors", []) or []
+            author_names = [getattr(a, "name", "") for a in authors if getattr(a, "name", None)]
+            # Best-effort translator filtering via simple keyword
+            filtered = [n for n in author_names if "traduct" not in n.lower() and "translator" not in n.lower()]
+            if filtered:
+                if len(filtered) == 1:
+                    author_str = filtered[0]
+                elif len(filtered) == 2:
+                    author_str = f"{filtered[0]} and {filtered[1]}"
+                else:
+                    author_str = f"{', '.join(filtered[:-1])}, and {filtered[-1]}"
+            else:
+                author_str = author_names[0] if author_names else "Unknown Author"
+
+            # Narrators -> comma-separated
+            narrators = getattr(product, "narrators", []) or []
+            narrator_str = ", ".join([getattr(n, "name", "") for n in narrators if getattr(n, "name", None)])
+
+            # Series (first)
+            series_list = getattr(product, "series", []) or []
+            series_title = getattr(series_list[0], "title", "") if series_list else ""
+            series_part = getattr(series_list[0], "sequence", "") if series_list else ""
+
+            # Description preference
+            publisher_summary = getattr(product, "publisher_summary", None)
+            extended_desc = getattr(product, "extended_product_description", None)
+            merchandising_summary = getattr(product, "merchandising_summary", None)
+            description = publisher_summary or extended_desc or merchandising_summary or ""
+
+            # Cover image
+            images = getattr(product, "product_images", None)
+            cover_url = None
+            if images is not None:
+                cover_url = getattr(images, "image_1000", None) or getattr(images, "image_500", None)
+
+            # Release date (YYYY-MM-DD)
+            release_date = ""
+            publication_datetime = getattr(product, "publication_datetime", None)
+            if publication_datetime:
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(publication_datetime.replace("Z", "+00:00"))
+                    release_date = dt.strftime("%Y-%m-%d")
+                except Exception:
+                    release_date = publication_datetime[:10]
+
+            runtime_length_min = getattr(product, "runtime_length_min", None)
+            language = getattr(product, "language", "") or ""
+            publisher_name = getattr(product, "publisher_name", "") or ""
+
+            metadata = {
+                "asin": asin,
+                "title": title,
+                "author": author_str,
+                "narrator": narrator_str,
+                "series": series_title or "",
+                "series_part": series_part or "",
+                "description": description or "",
+                "cover_url": cover_url or "",
+                "duration": str(runtime_length_min or ""),
+                "runtime_length_min": str(runtime_length_min or ""),
+                "release_date": release_date or "",
+                "language": language,
+                "publisher_name": publisher_name,
+            }
+            return metadata
+        except Exception as e:
+            logger.warning(f"Failed to normalize product to metadata dict: {e}")
+            # Fallback to minimal mapping
+            return {
+                "asin": getattr(product, "asin", None),
+                "title": getattr(product, "title", "") or "",
+                "author": "Unknown Author",
+            }
 
     def _clean_filename(self, filename: str) -> str:
         """Clean filename for filesystem compatibility"""

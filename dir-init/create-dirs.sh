@@ -27,7 +27,6 @@ fi
 mkdir -p "$DATA_DIR/covers"
 mkdir -p "$DATA_DIR/toTag"
 mkdir -p "$DATA_DIR/drop-torrents"
-mkdir -p "$DATA_DIR/saved-torrents-files"
 
 # Create simplified pipeline directories
 echo "   Creating pipeline directories..."
@@ -47,7 +46,6 @@ echo "   ├── toMerge/"
 echo "   ├── converted/"
 echo "   ├── conversion-backups/"
 echo "   ├── drop-torrents/"
-echo "   └── saved-torrents-files/"
 echo ""
 if [ "$DATA_DIR" != "$LIBRARY_DIR" ]; then
     echo "   $LIBRARY_DIR/"

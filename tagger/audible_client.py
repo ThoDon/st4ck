@@ -69,6 +69,28 @@ class AudibleAPIClient:
         
         return clean_text
     
+    def _is_translator_name(self, name: str) -> bool:
+        """Return True if the provided name likely denotes a translator/translation credit."""
+        lowered = (name or "").lower()
+        # French variants: traducteur / traductrice, and words containing "traduct"
+        if "traduct" in lowered:
+            return True
+        # English variant
+        if "translator" in lowered:
+            return True
+        return False
+
+    def _format_person_list(self, names: List[str]) -> str:
+        """Join a list of names into a natural-language string."""
+        names = [n.strip() for n in names if n and n.strip()]
+        if not names:
+            return "Unknown Author"
+        if len(names) == 1:
+            return names[0]
+        if len(names) == 2:
+            return f"{names[0]} and {names[1]}"
+        return f"{', '.join(names[:-1])}, and {names[-1]}"
+
     def process_authors(self, authors: List[Dict]) -> str:
         """Process authors list and return formatted author string"""
         if not authors:
@@ -77,19 +99,9 @@ class AudibleAPIClient:
         author_names = []
         for author in authors:
             name = author.get("name", "").strip()
-            if name:
+            if name and not self._is_translator_name(name):
                 author_names.append(name)
-        
-        if not author_names:
-            return "Unknown Author"
-        
-        # Join authors with appropriate separator
-        if len(author_names) == 1:
-            return author_names[0]
-        elif len(author_names) == 2:
-            return f"{author_names[0]} and {author_names[1]}"
-        else:
-            return f"{', '.join(author_names[:-1])}, and {author_names[-1]}"
+        return self._format_person_list(author_names)
     
     def parse_filename(self, filename: str) -> tuple[str, str]:
         """Parse filename to extract title and author"""
@@ -114,15 +126,15 @@ class AudibleAPIClient:
         # If no pattern matches, assume the whole filename is the title
         return name, "Unknown Author"
     
-    def search_audible(self, query: str, locale: str = "com") -> List[Dict]:
+    def search_audible(self, query: str, locale: str = "fr") -> List[Dict]:
         """Search Audible for books matching the query using the official API"""
         try:
             # Use baked-in search locales with preferred locale first
             locales = [
+                "fr",
                 "com",
                 "co.uk", 
                 "ca",
-                "fr",
                 "de",
                 "it",
                 "es",
@@ -246,7 +258,7 @@ class AudibleAPIClient:
             return []
     
     
-    def get_book_details(self, asin: str, locale: str = "com") -> Optional[Dict]:
+    def get_book_details(self, asin: str, locale: str = "fr") -> Optional[Dict]:
         """Get detailed book information from Audible using the official API"""
         try:
             # Use the official Audible API
@@ -269,162 +281,35 @@ class AudibleAPIClient:
                     f"No 'product' key in API response. Available keys: {list(data.keys())}"
                 )
                 return None
-
-            product = data["product"]
-            logger.info(f"Product keys: {list(product.keys())}")
-
-            # Extract comprehensive metadata based on Mp3tag reference
-            details = {
-                "asin": asin,
-                "title": product.get("title", ""),
-                "subtitle": product.get("subtitle", ""),
-                "author": "",
-                "authors": [],
-                "narrator": "",
-                "narrators": [],
-                "series": "",
-                "series_part": "",
-                "description": "",
-                "publisher_summary": "",
-                "runtime_length_min": "",
-                "rating": "",
-                "release_date": "",
-                "release_time": "",
-                "language": "",
-                "format_type": "",
-                "publisher_name": "",
-                "is_adult_product": False,
-                "cover_url": "",
-                "genres": [],
-                "copyright": "",
-                "isbn": "",
-                "explicit": False,
-            }
-
-            # Extract authors using the new processing method
-            if "authors" in product:
-                details["authors"] = [
-                    author.get("name", "")
-                    for author in product["authors"]
-                    if author.get("name")
+            # Validate into our Pydantic models
+            # Load Pydantic models robustly from tagger/types.py to avoid stdlib 'types' collision
+            try:
+                import importlib.util
+                from pathlib import Path as _Path
+                types_path_candidates = [
+                    _Path(__file__).parent / "types.py",
+                    _Path("/app/tagger/types.py"),
                 ]
-                details["author"] = self.process_authors(product["authors"])
+                AudibleAPIResponse = None
+                for _p in types_path_candidates:
+                    if _p.exists():
+                        spec = importlib.util.spec_from_file_location("tagger_types", str(_p))
+                        if spec and spec.loader:
+                            mod = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+                            if hasattr(mod, "AudibleAPIResponse"):
+                                AudibleAPIResponse = getattr(mod, "AudibleAPIResponse")
+                                break
+                if AudibleAPIResponse is None:
+                    raise ImportError("AudibleAPIResponse not found in types module")
+            except Exception as e:
+                logger.error(f"Failed to load AudibleAPIResponse model: {e}")
+                return None
 
-            # Extract narrators
-            if "narrators" in product:
-                for narrator in product["narrators"]:
-                    details["narrators"].append(narrator.get("name", ""))
-                details["narrator"] = ", ".join(details["narrators"])
-
-            # Extract description/summary
-            if "publisher_summary" in product:
-                clean_summary = self.clean_html_text(product["publisher_summary"])
-                details["publisher_summary"] = clean_summary
-                details["description"] = clean_summary
-            elif "extended_product_description" in product:
-                clean_description = self.clean_html_text(product["extended_product_description"])
-                details["description"] = clean_description
-                logger.info(
-                    f"Found description: {product['publisher_summary'][:100]}..."
-                )
-            else:
-                logger.warning(
-                    f"No publisher_summary found in product data. Available keys: {list(product.keys())}"
-                )
-                # Try alternative description fields
-                if "merchandising_summary" in product:
-                    details["publisher_summary"] = product["merchandising_summary"]
-                    details["description"] = product["merchandising_summary"]
-                    logger.info(f"Using merchandising_summary as description")
-                elif "product_desc" in product:
-                    details["publisher_summary"] = product["product_desc"]
-                    details["description"] = product["product_desc"]
-                    logger.info(f"Using product_desc as description")
-                else:
-                    # Final fallback - use empty string
-                    details["publisher_summary"] = ""
-                    details["description"] = ""
-                    logger.warning(f"No description found, using empty string")
-
-            # Extract runtime
-            if "runtime_length_min" in product:
-                details["runtime_length_min"] = str(product["runtime_length_min"])
-
-            # Extract rating
-            if "rating" in product:
-                rating = product["rating"]
-                if "overall_distribution" in rating:
-                    overall = rating["overall_distribution"]
-                    details["rating"] = overall.get("display_average_rating", "")
-                    logger.info(f"Extracted rating: {details['rating']}")
-
-            # Extract release date
-            if "publication_datetime" in product:
-                details["release_date"] = product["publication_datetime"]
-                # Also extract just the date part for RELEASETIME
-                try:
-                    from datetime import datetime
-
-                    dt = datetime.fromisoformat(
-                        product["publication_datetime"].replace("Z", "+00:00")
-                    )
-                    details["release_time"] = dt.strftime("%Y-%m-%d")
-                except:
-                    details["release_time"] = (
-                        product["publication_datetime"][:10]
-                        if len(product["publication_datetime"]) >= 10
-                        else ""
-                    )
-
-            # Extract language
-            details["language"] = product.get("language", "")
-
-            # Extract format type
-            details["format_type"] = product.get("format_type", "")
-
-            # Extract publisher
-            details["publisher_name"] = product.get("publisher_name", "")
-
-            # Extract adult content flag
-            details["is_adult_product"] = product.get("is_adult_product", False)
-            details["explicit"] = product.get("is_adult_product", False)
-
-            # Extract cover image
-            if "product_images" in product:
-                images = product["product_images"]
-                details["cover_url"] = images.get("1000", images.get("500", ""))
-
-            # Extract genres from category ladders
-            if "category_ladders" in product:
-                for ladder in product["category_ladders"]:
-                    if ladder.get("root") == "Genres":
-                        for category in ladder.get("ladder", []):
-                            details["genres"].append(category.get("name", ""))
-
-            # Extract copyright and ISBN from extended attributes
-            if "product_extended_attrs" in product:
-                ext_attrs = product["product_extended_attrs"]
-                details["copyright"] = ext_attrs.get("copyright", "")
-                # Try to extract ISBN from various possible fields
-                details["isbn"] = ext_attrs.get("isbn", "") or ext_attrs.get("isbn13", "") or ext_attrs.get("isbn10", "")
-
-            # Extract series information
-            if "series" in product and product["series"]:
-                series_data = product["series"]
-                if isinstance(series_data, list) and len(series_data) > 0:
-                    # Take the first series if multiple exist
-                    series_info = series_data[0]
-                    details["series"] = series_info.get("title", "")
-                    details["series_part"] = series_info.get("sequence", "")  # sequence is already a string in the API
-                    logger.info(f"Extracted series: '{details['series']}' - Part: '{details['series_part']}'")
-                elif isinstance(series_data, dict):
-                    details["series"] = series_data.get("title", "")
-                    details["series_part"] = series_data.get("sequence", "")
-                    logger.info(f"Extracted series: '{details['series']}' - Part: '{details['series_part']}'")
-
-            logger.info(f"Retrieved details for ASIN: {asin}")
-            logger.info(f"Series info: {details.get('series', 'None')} - Part: {details.get('series_part', 'None')}")
-            return details
+            api_response = AudibleAPIResponse.model_validate(data)  # type: ignore[call-arg]
+            product = api_response.product
+            logger.info(f"Product keys parsed via model. ASIN={product.asin}, title={product.title}")
+            return product
 
         except Exception as e:
             logger.error(f"Error fetching book details: {e}")
@@ -465,7 +350,7 @@ class AudibleAPIClient:
             logger.error(f"Error downloading cover for {asin}: {e}")
             return None
     
-    def handle_no_search_results(self, query: str, locale: str = "com") -> List[Dict]:
+    def handle_no_search_results(self, query: str, locale: str = "fr") -> List[Dict]:
         """Handle cases where no search results are found"""
         logger.info(f"No results found for query: {query}")
         

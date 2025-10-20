@@ -114,7 +114,7 @@ class TaggingItemCreate(BaseModel):
 
 class AudibleSearchRequest(BaseModel):
     query: str
-    locale: str = "com"
+    locale: str = "fr"
 
 class AudibleBookData(BaseModel):
     asin: str
@@ -129,11 +129,16 @@ class AudibleBookData(BaseModel):
     release_date: Optional[str] = None
     language: Optional[str] = None
     publisher: Optional[str] = None
-    locale: str = "com"
+    locale: str = "fr"
 
 class TagFileRequest(BaseModel):
     file_path: str
     book_data: AudibleBookData
+
+class TagFileByAsinRequest(BaseModel):
+    file_path: str
+    asin: str
+    locale: str = "fr"
 
 class ParseFilenameRequest(BaseModel):
     filename: str
@@ -524,31 +529,6 @@ async def add_torrent(request: dict):
         log_to_db("ERROR", f"Error adding torrent: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/torrents/available")
-async def get_available_torrents():
-    """Get list of available torrent files that can be added to Transmission"""
-    try:
-        torrents_dir = "/app/saved-torrents-files"
-        torrent_files = []
-        
-        if os.path.exists(torrents_dir):
-            for filename in os.listdir(torrents_dir):
-                if filename.endswith('.torrent'):
-                    file_path = os.path.join(torrents_dir, filename)
-                    file_size = os.path.getsize(file_path)
-                    torrent_files.append({
-                        "filename": filename,
-                        "size": file_size,
-                        "path": file_path
-                    })
-        
-        return {"torrents": torrent_files}
-        
-    except Exception as e:
-        logger.error(f"Error listing torrents: {e}")
-        log_to_db("ERROR", f"Error listing torrents: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.get("/tagging", response_model=List[TaggingItem])
 async def get_tagging_items():
     """Get tagging items from database"""
@@ -763,66 +743,52 @@ async def parse_filename_for_search(request: ParseFilenameRequest):
         log_to_db("ERROR", f"Error parsing filename: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/tagging/tag-file")
-async def tag_file_with_metadata(request: TagFileRequest):
-    """Tag a file with selected book metadata"""
+@app.post("/tagging/tag-file-by-asin")
+async def tag_file_with_asin(request: TagFileByAsinRequest):
+    """Tag a file by providing only an ASIN; server fetches metadata."""
     try:
-        logger.info(f"Starting tag-file request for: {request.file_path}")
-        logger.info(f"Book data: {request.book_data}")
-        
-        # Import the M4BTagger
+        logger.info(f"Starting tag-file-by-asin request for: {request.file_path} (ASIN={request.asin}, locale={request.locale})")
+
+        # Import the M4BTagger and Audible client
         import sys
         import os
         # Add tagger directory to Python path
         tagger_path = '/app/tagger'
         if tagger_path not in sys.path:
             sys.path.insert(0, tagger_path)
-        logger.info("Importing tagger modules...")
         from m4b_tagger import M4BTagger
         from audible_client import AudibleAPIClient
         from pathlib import Path
-        logger.info("Tagger modules imported successfully")
-        
+
         file_path = Path(request.file_path)
-        logger.info(f"Checking file path: {file_path}")
         if not file_path.exists():
-            logger.error(f"File not found: {file_path}")
             raise HTTPException(status_code=404, detail="File not found")
-        
+
         # Create directories with environment variable support
         library_dir = Path(os.getenv("LIBRARY_PATH", "/app/library"))
         covers_dir = Path(os.getenv("COVERS_PATH", "/app/data/covers"))
-        logger.info(f"Library dir: {library_dir}, Covers dir: {covers_dir}")
-        
-        # Initialize tagger
-        logger.info("Initializing M4BTagger...")
+
         tagger = M4BTagger(library_dir, covers_dir)
-        logger.info("M4BTagger initialized successfully")
-        
+
+        # Fetch full metadata from Audible
+        client = AudibleAPIClient()
+        details = client.get_book_details(request.asin, request.locale)
+        if not details:
+            raise HTTPException(status_code=404, detail="Audible book details not found")
+
+        # Determine cover URL from model (prefer 1000 over 500)
+        cover_url = None
+        if getattr(details, "product_images", None):
+            cover_url = getattr(details.product_images, "image_1000", None) or getattr(details.product_images, "image_500", None)
+
         # Download cover if available
         cover_path = None
-        if request.book_data.cover_url:
-            logger.info(f"Downloading cover from: {request.book_data.cover_url}")
-            client = AudibleAPIClient()
-            cover_path = client.download_cover(
-                request.book_data.cover_url,
-                request.book_data.asin,
-                covers_dir
-            )
-            logger.info(f"Cover downloaded to: {cover_path}")
-        else:
-            logger.info("No cover URL provided")
-        
-        # Convert Pydantic model to dict
-        book_data = request.book_data.dict()
-        logger.info(f"Book data converted to dict: {book_data}")
-        
+        if cover_url:
+            cover_path = client.download_cover(cover_url, request.asin, covers_dir)
+
         # Tag the file
-        logger.info("Starting file tagging...")
-        if tagger.tag_file(file_path, book_data, cover_path):
-            # Move to library
-            dest_path = tagger.move_to_library(file_path, book_data, cover_path)
-            
+        if tagger.tag_file(file_path, details, cover_path):
+            dest_path = tagger.move_to_library(file_path, details, cover_path)
             if dest_path:
                 # Update database status
                 conn = get_db_connection()
@@ -834,43 +800,31 @@ async def tag_file_with_metadata(request: TagFileRequest):
                 ''', (str(file_path),))
                 conn.commit()
                 conn.close()
-                
-                log_to_db("INFO", f"Successfully tagged and moved file: {file_path.name}")
-                
-                # Clean up all temporary files after successful tagging
+
+                log_to_db("INFO", f"Successfully tagged and moved file (ASIN): {file_path.name}")
+
                 try:
-                    # Extract book name from file path for cleanup
-                    book_name = file_path.stem  # Remove .m4b extension
-                    log_to_db("INFO", f"Attempting to clean up backup for book: '{book_name}'")
-                    
+                    book_name = file_path.stem
                     if cleanup_backup_on_tagging_success(book_name):
                         log_to_db("INFO", f"Cleaned up temporary files (backup, converted) for: {book_name}")
-                    else:
-                        log_to_db("WARNING", f"Failed to clean up temporary files for: {book_name}")
                 except Exception as e:
                     log_to_db("WARNING", f"Could not clean up temporary files: {e}")
-                
-                return {
-                    "message": "File tagged and moved successfully",
-                    "destination": str(dest_path)
-                }
+
+                return {"message": "File tagged and moved successfully", "destination": str(dest_path)}
             else:
                 raise HTTPException(status_code=500, detail="Failed to move file to library")
         else:
             raise HTTPException(status_code=500, detail="Failed to tag file")
-            
+
     except HTTPException:
-        # Re-raise HTTPExceptions (like 404 File not found) without modification
         raise
     except Exception as e:
         import traceback
         error_msg = str(e) if str(e) else "Unknown error occurred"
         error_traceback = traceback.format_exc()
-        
-        logger.error(f"Error tagging file: {error_msg}")
+        logger.error(f"Error tagging file by ASIN: {error_msg}")
         logger.error(f"Full traceback: {error_traceback}")
-        log_to_db("ERROR", f"Error tagging file: {error_msg}")
-        
+        log_to_db("ERROR", f"Error tagging file by ASIN: {error_msg}")
         raise HTTPException(status_code=500, detail=error_msg)
 
 @app.get("/logs", response_model=List[LogEntry])

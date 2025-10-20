@@ -43,39 +43,11 @@ export const torrentService = {
     return response.data;
   },
 
-  async startTorrent(torrentId: number): Promise<void> {
-    await api.post(`/torrents/${torrentId}/start`);
-  },
-
-  async stopTorrent(torrentId: number): Promise<void> {
-    await api.post(`/torrents/${torrentId}/stop`);
-  },
-
-  async getAvailableTorrents(): Promise<
-    { filename: string; size: number; path: string }[]
-  > {
-    const response = await api.get("/torrents/available");
-    return response.data.torrents;
-  },
-
-  async addTorrent(rssItemId: number): Promise<void> {
-    await api.post("/torrents/add", { rss_item_id: rssItemId });
-  },
 };
 
 export const taggingService = {
   async getTaggingItems(): Promise<TaggingItem[]> {
     const response = await api.get("/tagging");
-    return response.data;
-  },
-
-  async getTaggingStatus(): Promise<{
-    service: string;
-    status: string;
-    url: string;
-    error?: string;
-  }> {
-    const response = await api.get("/tagging/status");
     return response.data;
   },
 
@@ -87,16 +59,17 @@ export const taggingService = {
 
   async searchAudibleBooks(
     query: string,
-    locale: string = "com"
+    locale: string = "fr"
   ): Promise<any[]> {
     const response = await api.post("/tagging/search", { query, locale });
     return response.data.results;
   },
 
-  async tagFile(filePath: string, bookData: any): Promise<void> {
-    await api.post("/tagging/tag-file", {
+  async tagFileByAsin(filePath: string, asin: string, locale: string = "fr"): Promise<void> {
+    await api.post("/tagging/tag-file-by-asin", {
       file_path: filePath,
-      book_data: bookData,
+      asin,
+      locale,
     });
   },
 
@@ -124,23 +97,6 @@ export const conversionService = {
     return response.data;
   },
 
-  async getConversion(conversionId: number): Promise<ConversionTracking> {
-    const response = await api.get(`/conversions/${conversionId}`);
-    return response.data;
-  },
-
-  async triggerConversion(
-    bookName: string,
-    sourcePath: string,
-    rssItemId?: number
-  ): Promise<void> {
-    await api.post("/conversions/trigger", {
-      book_name: bookName,
-      source_path: sourcePath,
-      rss_item_id: rssItemId,
-    });
-  },
-
   async retryConversion(
     conversionId: number,
     force: boolean = false
@@ -152,29 +108,6 @@ export const conversionService = {
     await api.post(`/conversions/${conversionId}/cancel`);
   },
 
-  async getConversionJobs(): Promise<any[]> {
-    const response = await api.get("/conversions/jobs");
-    return response.data;
-  },
-
-  async getBackups(): Promise<any[]> {
-    const response = await api.get("/conversions/backups");
-    return response.data;
-  },
-
-  async deleteBackup(backupName: string): Promise<void> {
-    await api.delete(`/conversions/backups/${backupName}`);
-  },
-
-  async getSystemHealth(): Promise<any> {
-    const response = await api.get("/system/health");
-    return response.data;
-  },
-
-  async getRedisStatus(): Promise<any> {
-    const response = await api.get("/system/redis/status");
-    return response.data;
-  },
 };
 
 // YGG Gateway service
