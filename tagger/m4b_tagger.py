@@ -9,21 +9,29 @@ import shutil
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Any, Union
+from typing import Optional, Union
 
-# Prefer importing our Pydantic model; fall back gracefully if not available in path
+logger = logging.getLogger(__name__)
+
+# Import our Pydantic model
 try:
-    from types import AudibleProduct  # type: ignore
-except Exception:
+    from .types import AudibleProduct  # type: ignore
+    BookDataType = AudibleProduct
+    logger.info("Successfully imported AudibleProduct from .types")
+except Exception as e:
+    logger.warning(f"Failed to import AudibleProduct from .types: {e}")
     try:
-        from .types import AudibleProduct  # type: ignore
-    except Exception:
-        AudibleProduct = Any  # type: ignore
+        from types import AudibleProduct  # type: ignore
+        BookDataType = AudibleProduct
+        logger.info("Successfully imported AudibleProduct from types")
+    except Exception as e2:
+        logger.warning(f"Failed to import AudibleProduct from types: {e2}")
+        # If we can't import AudibleProduct, we'll use a different validation approach
+        AudibleProduct = None  # type: ignore
+        BookDataType = object  # Fallback type
 from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm
 
 from constants import TagConstants
-
-logger = logging.getLogger(__name__)
 
 class M4BTagger:
     """Class for tagging M4B files with metadata"""
@@ -36,13 +44,29 @@ class M4BTagger:
         self.library_dir.mkdir(exist_ok=True)
         self.covers_dir.mkdir(exist_ok=True)
     
-    def tag_file(self, file_path: Path, book_data: Union[Dict, AudibleProduct], cover_path: Optional[str] = None) -> bool:
+    def tag_file(self, file_path: Path, book_data: BookDataType, cover_path: Optional[str] = None) -> bool:
         """Tag an M4B file with book metadata"""
         try:
             logger.info(f"Tagging file: {file_path}")
-            # Normalize input to dict if a model is provided
-            if not isinstance(book_data, dict):
-                book_data = self._to_metadata_dict(book_data)
+            logger.info(f"Book data: {book_data}")
+            
+            # Validate that book_data conforms to AudibleProduct model (if available)
+            if AudibleProduct is not None:
+                if not isinstance(book_data, AudibleProduct):
+                    raise ValueError(f"book_data must be an instance of AudibleProduct, got {type(book_data)}")
+                
+                # Validate required fields
+                if not book_data.asin:
+                    raise ValueError("book_data.asin is required")
+                if not book_data.title:
+                    raise ValueError("book_data.title is required")
+            else:
+                logger.warning("AudibleProduct model not available - skipping validation")
+                # Basic validation for required attributes
+                if not hasattr(book_data, 'asin') or not book_data.asin:
+                    raise ValueError("book_data.asin is required")
+                if not hasattr(book_data, 'title') or not book_data.title:
+                    raise ValueError("book_data.title is required")
             
             # Load the M4B file
             audio = MP4(file_path)
@@ -75,61 +99,57 @@ class M4BTagger:
             logger.error(f"Full traceback: {traceback.format_exc()}")
             return False
     
-    def _set_basic_tags(self, audio: MP4, book_data: Dict):
+    def _set_basic_tags(self, audio: MP4, book_data: BookDataType):
         """Set basic M4B tags"""
         # Title
-        if book_data.get("title"):
-            audio[TagConstants.TITLE] = self._ensure_string(book_data["title"])
+        if book_data.title:
+            audio[TagConstants.TITLE] = book_data.title
         
         # Album (same as title for audiobooks)
-        if book_data.get("title"):
-            audio[TagConstants.ALBUM] = self._ensure_string(book_data["title"])
+        if book_data.title:
+            audio[TagConstants.ALBUM] = book_data.title
         
-        # Artist (author)
-        if book_data.get("author"):
-            audio[TagConstants.ARTIST] = self._ensure_string(book_data["author"])
-        
-        # Album Artist
-        if book_data.get("author"):
-            audio[TagConstants.ALBUM_ARTIST] = self._ensure_string(book_data["author"])
+        # Artist (author) - get first author name
+        if book_data.authors:
+            author_name = book_data.authors[0].name
+            audio[TagConstants.ARTIST] = author_name
+            audio[TagConstants.ALBUM_ARTIST] = author_name
         
         # Year
-        if book_data.get("release_time"):
-            release_time_str = self._ensure_string(book_data["release_time"])
-            year = self._extract_year(release_time_str)
+        if book_data.publication_datetime:
+            year = self._extract_year(book_data.publication_datetime)
             if year:
                 audio[TagConstants.YEAR] = year
-        elif book_data.get("release_date"):
-            release_date_str = self._ensure_string(book_data["release_date"])
-            year = self._extract_year(release_date_str)
+        elif book_data.release_date:
+            year = self._extract_year(book_data.release_date)
             if year:
                 audio[TagConstants.YEAR] = year
         
         # Genre
         audio[TagConstants.GENRE] = "Audiobook"
         
-        # Comment
-        if book_data.get("description"):
+        # Comment - use best available description
+        description = (book_data.publisher_summary or 
+                      book_data.extended_product_description or 
+                      book_data.merchandising_summary or "")
+        if description:
             # Truncate description if too long
-            description = self._ensure_string(book_data["description"])
             if len(description) > 500:
                 description = description[:500] + "..."
             audio[TagConstants.COMMENT] = description
     
-    def _set_custom_tags(self, audio: MP4, book_data: Dict):
+    def _set_custom_tags(self, audio: MP4, book_data: BookDataType):
         """Set custom iTunes tags"""
         # ASIN
-        if book_data.get("asin"):
-            logger.info(f"Processing ASIN: {book_data['asin']} (type: {type(book_data['asin'])})")
-            asin_str = self._ensure_string(book_data["asin"])
-            asin_tag = MP4FreeForm(asin_str.encode("utf-8"))
+        if book_data.asin:
+            logger.info(f"Processing ASIN: {book_data.asin} (type: {type(book_data.asin)})")
+            asin_tag = MP4FreeForm(book_data.asin.encode("utf-8"))
             audio[TagConstants.ASIN] = [asin_tag]
             audio[TagConstants.AUDIBLE_ASIN] = [asin_tag]
         
         # Language
-        if book_data.get("language"):
-            lang_str = self._ensure_string(book_data["language"])
-            lang_tag = MP4FreeForm(lang_str.encode("utf-8"))
+        if book_data.language:
+            lang_tag = MP4FreeForm(book_data.language.encode("utf-8"))
             audio[TagConstants.LANGUAGE] = [lang_tag]
         
         # Format
@@ -137,37 +157,31 @@ class M4BTagger:
         audio[TagConstants.FORMAT] = [format_tag]
         
         # Series information
-        if book_data.get("series"):
-            series_str = self._ensure_string(book_data["series"])
-            series_tag = MP4FreeForm(series_str.encode("utf-8"))
-            audio[TagConstants.SERIES] = [series_tag]
-        
-        if book_data.get("series_part"):
-            series_part_str = self._ensure_string(book_data["series_part"])
-            series_part_tag = MP4FreeForm(series_part_str.encode("utf-8"))
-            audio[TagConstants.SERIES_PART] = [series_part_tag]
+        if book_data.series:
+            series_title = book_data.series[0].title
+            if series_title:
+                series_tag = MP4FreeForm(series_title.encode("utf-8"))
+                audio[TagConstants.SERIES] = [series_tag]
+            
+            series_part = book_data.series[0].sequence
+            if series_part:
+                series_part_tag = MP4FreeForm(series_part.encode("utf-8"))
+                audio[TagConstants.SERIES_PART] = [series_part_tag]
         
         # Narrator
-        if book_data.get("narrator"):
-            logger.info(f"Processing narrator: {book_data['narrator']} (type: {type(book_data['narrator'])})")
-            narrator_str = self._ensure_string(book_data["narrator"])
-            logger.info(f"Narrator after _ensure_string: {narrator_str} (type: {type(narrator_str)})")
+        if book_data.narrators:
+            narrator_names = [narrator.name for narrator in book_data.narrators]
+            narrator_str = ", ".join(narrator_names)
+            logger.info(f"Processing narrator: {narrator_str} (type: {type(narrator_str)})")
             audio[TagConstants.NARRATOR_ALT] = narrator_str
         
         # Publisher
-        if book_data.get("publisher_name"):
-            publisher_str = self._ensure_string(book_data["publisher_name"])
-            audio[TagConstants.PUBLISHER_ALT] = publisher_str
-        elif book_data.get("publisher"):
-            publisher_str = self._ensure_string(book_data["publisher"])
-            audio[TagConstants.PUBLISHER_ALT] = publisher_str
+        if book_data.publisher_name:
+            audio[TagConstants.PUBLISHER_ALT] = book_data.publisher_name
         
         # Duration
-        if book_data.get("runtime_length_min"):
-            duration_str = self._ensure_string(book_data["runtime_length_min"])
-            audio[TagConstants.DESC_ALT] = duration_str
-        elif book_data.get("duration"):
-            duration_str = self._ensure_string(book_data["duration"])
+        if book_data.runtime_length_min:
+            duration_str = str(book_data.runtime_length_min)
             audio[TagConstants.DESC_ALT] = duration_str
     
     def _add_cover(self, audio: MP4, cover_path: str):
@@ -199,16 +213,27 @@ class M4BTagger:
         
         return None
     
-    def move_to_library(self, file_path: Path, book_data: Union[Dict, AudibleProduct], cover_path: Optional[str] = None) -> Optional[Path]:
+    def move_to_library(self, file_path: Path, book_data: BookDataType, cover_path: Optional[str] = None) -> Optional[Path]:
         """Move tagged file to library with organized structure"""
         try:
-            if not isinstance(book_data, dict):
-                book_data = self._to_metadata_dict(book_data)
+            # Validate that book_data conforms to AudibleProduct model (if available)
+            if AudibleProduct is not None:
+                if not isinstance(book_data, AudibleProduct):
+                    raise ValueError(f"book_data must be an instance of AudibleProduct, got {type(book_data)}")
+            else:
+                logger.warning("AudibleProduct model not available - skipping validation")
+                # Basic validation for required attributes
+                if not hasattr(book_data, 'asin') or not book_data.asin:
+                    raise ValueError("book_data.asin is required")
+                if not hasattr(book_data, 'title') or not book_data.title:
+                    raise ValueError("book_data.title is required")
+            
             # Create organized directory structure
-            author = self._clean_filename(book_data.get("author", "Unknown Author"))
-            title = self._clean_filename(book_data.get("title", "Unknown Title"))
-            series = book_data.get("series", "")
-            series_part = book_data.get("series_part", "")
+            author_name = book_data.authors[0].name if book_data.authors else "Unknown Author"
+            author = self._clean_filename(author_name)
+            title = self._clean_filename(book_data.title)
+            series = book_data.series[0].title if book_data.series else ""
+            series_part = book_data.series[0].sequence if book_data.series else ""
             
             # Debug logging
             logger.info(f"Library structure - Author: '{author}', Title: '{title}'")
@@ -271,20 +296,24 @@ class M4BTagger:
             logger.error(f"Error moving file to library: {e}")
             return None
     
-    def create_opf_content(self, metadata: Dict) -> str:
+    def create_opf_content(self, metadata: BookDataType) -> str:
         """Create OPF (Open Packaging Format) content for metadata"""
         try:
-            logger.info(f"Creating OPF content for metadata: {metadata.get('title', 'Unknown')}")
-            title = self._ensure_string(metadata.get("title", "Unknown Title"))
-            author = self._ensure_string(metadata.get("author", "Unknown Author"))
-            description = self._ensure_string(metadata.get("description", ""))
-            narrator = self._ensure_string(metadata.get("narrator", ""))
-            series = self._ensure_string(metadata.get("series", ""))
-            series_part = self._ensure_string(metadata.get("series_part", ""))
-            asin = self._ensure_string(metadata.get("asin", ""))
-            publisher = self._ensure_string(metadata.get("publisher_name", metadata.get("publisher", "")))
-            language = self._ensure_string(metadata.get("language", "en"))
-            release_date = self._ensure_string(metadata.get("release_date", ""))
+            logger.info(f"Creating OPF content for metadata: {metadata.title}")
+            title = metadata.title
+            author_name = metadata.authors[0].name if metadata.authors else "Unknown Author"
+            author = author_name
+            description = (metadata.publisher_summary or 
+                          metadata.extended_product_description or 
+                          metadata.merchandising_summary or "")
+            narrator_names = [narrator.name for narrator in metadata.narrators] if metadata.narrators else []
+            narrator = ", ".join(narrator_names)
+            series = metadata.series[0].title if metadata.series else ""
+            series_part = metadata.series[0].sequence if metadata.series else ""
+            asin = metadata.asin
+            publisher = metadata.publisher_name or ""
+            language = metadata.language or "en"
+            release_date = metadata.release_date or metadata.publication_datetime or ""
             
             # Create unique identifier
             identifier = asin if asin else f"book_{hash(title + author)}"
@@ -331,8 +360,8 @@ class M4BTagger:
         <dc:identifier opf:scheme="ASIN">{identifier}</dc:identifier>
         {narrator_info}
         {series_info}
-        <meta property="duration">{metadata.get("duration", "0")}</meta>
-        <meta property="rating">{metadata.get("rating", "0")}</meta>
+        <meta property="duration">{metadata.runtime_length_min or "0"}</meta>
+        <meta property="rating">{metadata.rating.overall_distribution.average_rating if metadata.rating and metadata.rating.overall_distribution and metadata.rating.overall_distribution.average_rating else "0"}</meta>
     </metadata>
 <manifest>
     <item id="cover" href="cover.jpg" media-type="image/jpeg"/>
@@ -348,31 +377,33 @@ class M4BTagger:
             logger.error(f"Error creating OPF content: {e}")
             return ""
     
-    def create_additional_metadata_files(self, dest_dir: Path, metadata: Dict, cover_path: Optional[Path] = None) -> None:
+    def create_additional_metadata_files(self, dest_dir: Path, metadata: BookDataType, cover_path: Optional[Path] = None) -> None:
         """Create additional metadata files compatible with Audiobookshelf"""
         try:
             logger.info(f"Creating additional metadata files in: {dest_dir}")
             # Create desc.txt (description)
-            if metadata.get("description"):
-                desc_content = self._ensure_string(metadata["description"])
+            description = (metadata.publisher_summary or 
+                          metadata.extended_product_description or 
+                          metadata.merchandising_summary or "")
+            if description:
                 desc_file = dest_dir / "desc.txt"
                 with open(desc_file, "w", encoding="utf-8") as f:
-                    f.write(desc_content)
+                    f.write(description)
             
             # Create reader.txt (narrator)
-            if metadata.get("narrator"):
-                reader_content = self._ensure_string(metadata["narrator"])
+            if metadata.narrators:
+                narrator_names = [narrator.name for narrator in metadata.narrators]
+                reader_content = ", ".join(narrator_names)
                 reader_file = dest_dir / "reader.txt"
                 with open(reader_file, "w", encoding="utf-8") as f:
                     f.write(reader_content)
             
             # Create series.txt if series information exists
-            if metadata.get("series"):
+            if metadata.series:
                 series_file = dest_dir / "series.txt"
-                series_info = self._ensure_string(metadata["series"])
-                if metadata.get("series_part"):
-                    series_part = self._ensure_string(metadata["series_part"])
-                    series_info += f" #{series_part}"
+                series_info = metadata.series[0].title
+                if metadata.series[0].sequence:
+                    series_info += f" #{metadata.series[0].sequence}"
                 with open(series_file, "w", encoding="utf-8") as f:
                     f.write(series_info)
             
@@ -388,9 +419,9 @@ class M4BTagger:
                     m4b_name = m4b_files[0].stem  # Get filename without extension
                 else:
                     # Fallback: construct the filename from metadata to match the new naming convention
-                    title = self._ensure_string(metadata.get("title", "Unknown Title"))
-                    series = self._ensure_string(metadata.get("series", ""))
-                    series_part = self._ensure_string(metadata.get("series_part", ""))
+                    title = metadata.title
+                    series = metadata.series[0].title if metadata.series else ""
+                    series_part = metadata.series[0].sequence if metadata.series else ""
                     
                     # Clean series name - remove part number if present
                     clean_series = series
@@ -415,127 +446,19 @@ class M4BTagger:
         except Exception as e:
             logger.error(f"Error creating metadata files: {e}")
     
-    def _build_subject_tags(self, metadata: Dict) -> str:
+    def _build_subject_tags(self, metadata: BookDataType) -> str:
         """Build subject tags from metadata"""
         subjects = []
 
-        logger.info(f"Building subject tags for metadata: {metadata}")
-        
-        # Add genre if available
-        if metadata.get("genre"):
-            subjects.append(f'<dc:subject>{self._ensure_string(metadata["genre"])}</dc:subject>')
-        
-        # Add categories if available
-        if metadata.get("categories"):
-            categories = metadata["categories"]
-            if isinstance(categories, list):
-                for category in categories:
-                    subjects.append(f'<dc:subject>{self._ensure_string(category)}</dc:subject>')
-            elif isinstance(categories, str):
-                subjects.append(f'<dc:subject>{self._ensure_string(categories)}</dc:subject>')
+        # Add categories from category_ladders if available
+        if metadata.category_ladders:
+            for ladder_group in metadata.category_ladders:
+                for ladder in ladder_group.ladder:
+                    subjects.append(f'<dc:subject>{ladder.name}</dc:subject>')
         
         return '\n        '.join(subjects) if subjects else ""
     
-    def _ensure_string(self, value) -> str:
-        """Ensure a value is a string, handling bytes and other types safely"""
-        if isinstance(value, str):
-            return value
-        elif isinstance(value, bytes):
-            try:
-                return value.decode("utf-8", errors="replace")
-            except UnicodeDecodeError:
-                return str(value)
-        elif hasattr(value, 'decode'):  # Handle MP4FreeForm and similar objects
-            try:
-                return value.decode("utf-8", errors="replace")
-            except:
-                return str(value)
-        elif hasattr(value, '__str__'):  # Handle any object with string representation
-            return str(value)
-        else:
-            return str(value)
 
-    def _to_metadata_dict(self, product: AudibleProduct) -> Dict:
-        """Convert an AudibleProduct-like model into a flat metadata dict used by tagger and OPF."""
-        try:
-            asin = getattr(product, "asin", None)
-            title = getattr(product, "title", "") or ""
-
-            # Authors -> single string, excluding translators if possible
-            authors = getattr(product, "authors", []) or []
-            author_names = [getattr(a, "name", "") for a in authors if getattr(a, "name", None)]
-            # Best-effort translator filtering via simple keyword
-            filtered = [n for n in author_names if "traduct" not in n.lower() and "translator" not in n.lower()]
-            if filtered:
-                if len(filtered) == 1:
-                    author_str = filtered[0]
-                elif len(filtered) == 2:
-                    author_str = f"{filtered[0]} and {filtered[1]}"
-                else:
-                    author_str = f"{', '.join(filtered[:-1])}, and {filtered[-1]}"
-            else:
-                author_str = author_names[0] if author_names else "Unknown Author"
-
-            # Narrators -> comma-separated
-            narrators = getattr(product, "narrators", []) or []
-            narrator_str = ", ".join([getattr(n, "name", "") for n in narrators if getattr(n, "name", None)])
-
-            # Series (first)
-            series_list = getattr(product, "series", []) or []
-            series_title = getattr(series_list[0], "title", "") if series_list else ""
-            series_part = getattr(series_list[0], "sequence", "") if series_list else ""
-
-            # Description preference
-            publisher_summary = getattr(product, "publisher_summary", None)
-            extended_desc = getattr(product, "extended_product_description", None)
-            merchandising_summary = getattr(product, "merchandising_summary", None)
-            description = publisher_summary or extended_desc or merchandising_summary or ""
-
-            # Cover image
-            images = getattr(product, "product_images", None)
-            cover_url = None
-            if images is not None:
-                cover_url = getattr(images, "image_1000", None) or getattr(images, "image_500", None)
-
-            # Release date (YYYY-MM-DD)
-            release_date = ""
-            publication_datetime = getattr(product, "publication_datetime", None)
-            if publication_datetime:
-                try:
-                    from datetime import datetime
-                    dt = datetime.fromisoformat(publication_datetime.replace("Z", "+00:00"))
-                    release_date = dt.strftime("%Y-%m-%d")
-                except Exception:
-                    release_date = publication_datetime[:10]
-
-            runtime_length_min = getattr(product, "runtime_length_min", None)
-            language = getattr(product, "language", "") or ""
-            publisher_name = getattr(product, "publisher_name", "") or ""
-
-            metadata = {
-                "asin": asin,
-                "title": title,
-                "author": author_str,
-                "narrator": narrator_str,
-                "series": series_title or "",
-                "series_part": series_part or "",
-                "description": description or "",
-                "cover_url": cover_url or "",
-                "duration": str(runtime_length_min or ""),
-                "runtime_length_min": str(runtime_length_min or ""),
-                "release_date": release_date or "",
-                "language": language,
-                "publisher_name": publisher_name,
-            }
-            return metadata
-        except Exception as e:
-            logger.warning(f"Failed to normalize product to metadata dict: {e}")
-            # Fallback to minimal mapping
-            return {
-                "asin": getattr(product, "asin", None),
-                "title": getattr(product, "title", "") or "",
-                "author": "Unknown Author",
-            }
 
     def _clean_filename(self, filename: str) -> str:
         """Clean filename for filesystem compatibility"""
