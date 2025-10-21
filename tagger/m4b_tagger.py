@@ -103,30 +103,30 @@ class M4BTagger:
         """Set basic M4B tags"""
         # Title
         if book_data.title:
-            audio[TagConstants.TITLE] = book_data.title
+            audio[TagConstants.TITLE] = [book_data.title]
         
         # Album (same as title for audiobooks)
         if book_data.title:
-            audio[TagConstants.ALBUM] = book_data.title
+            audio[TagConstants.ALBUM] = [book_data.title]
         
         # Artist (author) - get first author name
         if book_data.authors:
             author_name = book_data.authors[0].name
-            audio[TagConstants.ARTIST] = author_name
-            audio[TagConstants.ALBUM_ARTIST] = author_name
+            audio[TagConstants.ARTIST] = [author_name]
+            audio[TagConstants.ALBUM_ARTIST] = [author_name]
         
         # Year
         if book_data.publication_datetime:
             year = self._extract_year(book_data.publication_datetime)
             if year:
-                audio[TagConstants.YEAR] = year
+                audio[TagConstants.YEAR] = [year]
         elif book_data.release_date:
             year = self._extract_year(book_data.release_date)
             if year:
-                audio[TagConstants.YEAR] = year
+                audio[TagConstants.YEAR] = [year]
         
         # Genre
-        audio[TagConstants.GENRE] = "Audiobook"
+        audio[TagConstants.GENRE] = ["Audiobook"]
         
         # Comment - use best available description
         description = (book_data.publisher_summary or 
@@ -136,7 +136,7 @@ class M4BTagger:
             # Truncate description if too long
             if len(description) > 500:
                 description = description[:500] + "..."
-            audio[TagConstants.COMMENT] = description
+            audio[TagConstants.COMMENT] = [description]
     
     def _set_custom_tags(self, audio: MP4, book_data: BookDataType):
         """Set custom iTunes tags"""
@@ -156,7 +156,7 @@ class M4BTagger:
         format_tag = MP4FreeForm(b"Audiobook")
         audio[TagConstants.FORMAT] = [format_tag]
         
-        # Series information
+        # Series information (use only first series for MP4 tags)
         if book_data.series:
             series_title = book_data.series[0].title
             if series_title:
@@ -168,21 +168,96 @@ class M4BTagger:
                 series_part_tag = MP4FreeForm(series_part.encode("utf-8"))
                 audio[TagConstants.SERIES_PART] = [series_part_tag]
         
-        # Narrator
+        # Narrator (composer field)
         if book_data.narrators:
             narrator_names = [narrator.name for narrator in book_data.narrators]
             narrator_str = ", ".join(narrator_names)
             logger.info(f"Processing narrator: {narrator_str} (type: {type(narrator_str)})")
-            audio[TagConstants.NARRATOR_ALT] = narrator_str
+            audio[TagConstants.COMPOSER] = [narrator_str]
         
         # Publisher
         if book_data.publisher_name:
-            audio[TagConstants.PUBLISHER_ALT] = book_data.publisher_name
+            publisher_tag = MP4FreeForm(book_data.publisher_name.encode("utf-8"))
+            audio[TagConstants.PUBLISHER] = [publisher_tag]
         
-        # Duration
-        if book_data.runtime_length_min:
-            duration_str = str(book_data.runtime_length_min)
-            audio[TagConstants.DESC_ALT] = duration_str
+        # Description
+        description = (book_data.publisher_summary or 
+                      book_data.extended_product_description or 
+                      book_data.merchandising_summary or "")
+        if description:
+            desc_tag = MP4FreeForm(description.encode("utf-8"))
+            audio[TagConstants.DESCRIPTION] = [desc_tag]
+        
+        # Genres (from category ladders)
+        if book_data.category_ladders:
+            genres = []
+            for ladder_group in book_data.category_ladders:
+                for ladder in ladder_group.ladder:
+                    genres.append(ladder.name)
+            if genres:
+                genres_str = "; ".join(genres)
+                genres_tag = MP4FreeForm(genres_str.encode("utf-8"))
+                audio[TagConstants.GENRES] = [genres_tag]
+        
+        # ISBN (if available in metadata)
+        if hasattr(book_data, 'isbn') and book_data.isbn:
+            isbn_tag = MP4FreeForm(book_data.isbn.encode("utf-8"))
+            audio[TagConstants.ISBN] = [isbn_tag]
+        
+        # Add alternative tags for better MP3Tag compatibility
+        if book_data.asin:
+            # Add ASIN in alternative formats
+            audio[TagConstants.SIMPLE_ASIN] = [book_data.asin]
+            audio[TagConstants.CDEK_ASIN] = [book_data.asin]
+        
+        # Add narrator in alternative format
+        if book_data.narrators:
+            narrator_names = [narrator.name for narrator in book_data.narrators]
+            narrator_str = ", ".join(narrator_names)
+            audio[TagConstants.NARRATOR_ALT] = [narrator_str]
+        
+        # Add publisher in alternative format
+        if book_data.publisher_name:
+            audio[TagConstants.PUBLISHER_ALT] = [book_data.publisher_name]
+        
+        # Add series in alternative format
+        if book_data.series:
+            series_title = book_data.series[0].title
+            if series_title:
+                audio[TagConstants.SERIES_ALT] = [series_title]
+        
+        # Add description in alternative format
+        description = (book_data.publisher_summary or 
+                      book_data.extended_product_description or 
+                      book_data.merchandising_summary or "")
+        if description:
+            audio[TagConstants.DESC_ALT] = [description]
+            audio[TagConstants.DESC_ALT2] = [description]
+        
+        # Add album sort (for series)
+        if book_data.series and book_data.title:
+            series_title = book_data.series[0].title
+            series_part = book_data.series[0].sequence
+            if series_title and series_part:
+                album_sort = f"{series_title} {series_part} - {book_data.title}"
+            elif series_title:
+                album_sort = f"{series_title} - {book_data.title}"
+            else:
+                album_sort = book_data.title
+            audio[TagConstants.ALBUM_SORT] = [album_sort]
+        
+        # Add group tag for series
+        if book_data.series:
+            series_title = book_data.series[0].title
+            series_part = book_data.series[0].sequence
+            if series_title and series_part:
+                group_tag = f"{series_title}, Book #{series_part}"
+            elif series_title:
+                group_tag = series_title
+            else:
+                group_tag = ""
+            if group_tag:
+                audio[TagConstants.GROUP] = [group_tag]
     
     def _add_cover(self, audio: MP4, cover_path: str):
         """Add cover art to the M4B file"""
@@ -318,49 +393,53 @@ class M4BTagger:
             # Create unique identifier
             identifier = asin if asin else f"book_{hash(title + author)}"
             
-            # Build series information
-            series_info = ""
-            if series:
-                series_info = f'<dc:subject opf:authority="series">{series}</dc:subject>'
-                if series_part:
-                    series_info += f'\n        <meta property="series-part">{series_part}</meta>'
-            
-            # Build narrator information
-            narrator_info = ""
-            if narrator:
-                narrator_info = f'<dc:contributor role="nrt">{narrator}</dc:contributor>'
-            
-            # Build publisher information
-            publisher_info = ""
-            if publisher:
-                publisher_info = f'<dc:publisher>{publisher}</dc:publisher>'
-            
-            # Build language information
-            language_info = f'<dc:language>{language}</dc:language>'
-            
-            # Build date information
-            date_info = ""
+            # Extract publish year
+            publish_year = ""
             if release_date:
-                # Extract year from release date
                 year_match = re.search(r'\b(19|20)\d{2}\b', release_date)
                 if year_match:
-                    date_info = f'<dc:date>{year_match.group()}</dc:date>'
+                    publish_year = year_match.group()
+            
+            # Build ISBN (if available)
+            isbn = ""
+            if hasattr(metadata, 'isbn') and metadata.isbn:
+                isbn = metadata.isbn
+            
+            # Build multiple authors (excluding translators)
+            authors_xml = ""
+            if metadata.authors:
+                for author in metadata.authors:
+                    if not self._is_translator_name(author.name):
+                        authors_xml += f'        <dc:creator>{author.name}</dc:creator>\n'
+            
+            # Build multiple narrators
+            narrators_xml = ""
+            if metadata.narrators:
+                for narrator in metadata.narrators:
+                    narrators_xml += f'        <dc:contributor role="nrt">{narrator.name}</dc:contributor>\n'
+            
+            # Build multiple series
+            series_xml = ""
+            if metadata.series:
+                for series_item in metadata.series:
+                    if series_item.title:
+                        series_xml += f'        <meta property="series">{series_item.title}</meta>\n'
+                        if series_item.sequence:
+                            series_xml += f'        <meta property="volumeNumber">{series_item.sequence}</meta>\n'
             
             opf_content = f'''<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
     <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
         <dc:identifier id="BookId">{identifier}</dc:identifier>
         <dc:title>{title}</dc:title>
-        <dc:creator>{author}</dc:creator>
-        {publisher_info}
+{authors_xml}{narrators_xml}        <dc:publisher>{publisher}</dc:publisher>
         <dc:language>{language}</dc:language>
         <dc:description>{description}</dc:description>
         {self._build_subject_tags(metadata)}
-        {date_info}
-        <dc:identifier opf:scheme="ASIN">{identifier}</dc:identifier>
-        {narrator_info}
-        {series_info}
-        <meta property="duration">{metadata.runtime_length_min or "0"}</meta>
+        <dc:date>{publish_year}</dc:date>
+        <dc:identifier opf:scheme="ASIN">{asin}</dc:identifier>
+        <dc:identifier opf:scheme="ISBN">{isbn}</dc:identifier>
+{series_xml}        <meta property="duration">{metadata.runtime_length_min or "0"}</meta>
         <meta property="rating">{metadata.rating.overall_distribution.average_rating if metadata.rating and metadata.rating.overall_distribution and metadata.rating.overall_distribution.average_rating else "0"}</meta>
     </metadata>
 <manifest>
@@ -446,6 +525,17 @@ class M4BTagger:
         except Exception as e:
             logger.error(f"Error creating metadata files: {e}")
     
+    def _is_translator_name(self, name: str) -> bool:
+        """Return True if the provided name likely denotes a translator/translation credit."""
+        lowered = (name or "").lower()
+        # French variants: traducteur / traductrice, and words containing "traduct"
+        if "traduct" in lowered:
+            return True
+        # English variant
+        if "translator" in lowered:
+            return True
+        return False
+
     def _build_subject_tags(self, metadata: BookDataType) -> str:
         """Build subject tags from metadata"""
         subjects = []

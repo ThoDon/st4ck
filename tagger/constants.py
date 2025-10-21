@@ -32,6 +32,10 @@ class TagConstants:
     EXPLICIT = "----:com.apple.iTunes:EXPLICIT"
     WWWAUDIOFILE = "----:com.apple.iTunes:WWWAUDIOFILE"
     AUDIBLE_ASIN = "----:com.apple.iTunes:AUDIBLE_ASIN"
+    ISBN = "----:com.apple.iTunes:ISBN"
+    PUBLISHER = "----:com.apple.iTunes:PUBLISHER"
+    DESCRIPTION = "----:com.apple.iTunes:DESCRIPTION"
+    GENRES = "----:com.apple.iTunes:GENRES"
     
     # Alternative tags for compatibility
     ALBUM_SORT = "soal"
