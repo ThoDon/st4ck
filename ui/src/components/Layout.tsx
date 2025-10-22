@@ -1,4 +1,4 @@
-import { Activity, BookOpen, Download, Tag, Settings, Menu, X } from "lucide-react";
+import { Activity, BookOpen, Download, Tag, Settings, Menu, X, Library } from "lucide-react";
 import React, { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import DarkModeToggle from "./DarkModeToggle";
@@ -41,6 +41,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       icon: Tag,
       hasIndicator: tagging.hasPendingTagging,
       indicatorCount: tagging.count,
+    },
+    {
+      path: "/library",
+      label: "Library",
+      icon: Library,
+      hasIndicator: false, // Library doesn't need an indicator
     },
     {
       path: "/logs",

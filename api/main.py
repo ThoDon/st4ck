@@ -1350,6 +1350,183 @@ async def add_ygg_torrent_to_transmission(request: TorrentAddRequest):
         log_to_db("ERROR", f"Error adding YGG torrent: {e}")
         raise HTTPException(status_code=500, detail=f"Error adding torrent: {str(e)}")
 
+# Library endpoints
+class LibraryItem(BaseModel):
+    name: str
+    path: str
+    type: str  # "file" or "directory"
+    size: Optional[int] = None
+    isM4B: Optional[bool] = None
+
+class LibraryResponse(BaseModel):
+    items: List[LibraryItem]
+    currentPath: str
+
+class RetagRequest(BaseModel):
+    file_path: str
+
+@app.get("/library/test")
+async def test_library():
+    """Test endpoint for library"""
+    return {"message": "Library endpoint working"}
+
+@app.get("/library/simple")
+async def get_library_simple(path: str = Query(..., description="Path to browse")):
+    """Simple library endpoint without Pydantic models"""
+    try:
+        logger.info(f"Simple library endpoint called with path: {path}")
+        return {"message": f"Path received: {path}", "path_exists": os.path.exists(path)}
+    except Exception as e:
+        logger.error(f"Simple library error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/library")
+async def get_library_root():
+    """Get library items from the root library directory"""
+    try:
+        # Use environment variable for library path
+        library_base = os.getenv("LIBRARY_PATH", "/app/library")
+        
+        logger.info(f"Library root endpoint called with base: {library_base}")
+        
+        if not os.path.exists(library_base):
+            logger.error(f"Library base does not exist: {library_base}")
+            raise HTTPException(status_code=404, detail=f"Library directory not found: {library_base}")
+        
+        items = []
+        
+        for item_name in sorted(os.listdir(library_base)):
+            item_path = os.path.join(library_base, item_name)
+            
+            if os.path.isdir(item_path):
+                items.append({
+                    "name": item_name,
+                    "path": item_path,
+                    "type": "directory"
+                })
+            else:
+                # Check if it's an M4B file
+                is_m4b = item_name.lower().endswith('.m4b')
+                file_size = os.path.getsize(item_path) if os.path.exists(item_path) else 0
+                
+                items.append({
+                    "name": item_name,
+                    "path": item_path,
+                    "type": "file",
+                    "size": file_size,
+                    "isM4B": is_m4b
+                })
+        
+        logger.info(f"Returning {len(items)} items from library root")
+        return {"items": items, "currentPath": library_base}
+        
+    except HTTPException as he:
+        logger.error(f"HTTPException: {he}")
+        raise
+    except Exception as e:
+        logger.error(f"Error browsing library root: {repr(e)}")
+        logger.error(f"Error type: {type(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error browsing library: {repr(e)}")
+
+@app.get("/library/browse")
+async def get_library_items(path: str = Query(..., description="Subpath to browse")):
+    """Get library items from a specific subpath"""
+    try:
+        # Use environment variable for library path
+        library_base = os.getenv("LIBRARY_PATH", "/app/library")
+        
+        # Ensure the path is within the library directory for security
+        if not path.startswith(library_base):
+            path = os.path.join(library_base, path.lstrip('/'))
+        
+        logger.info(f"Library browse endpoint called with path: {path}")
+        
+        if not os.path.exists(path):
+            logger.error(f"Path does not exist: {path}")
+            raise HTTPException(status_code=404, detail=f"Path not found: {path}")
+        
+        items = []
+        
+        for item_name in sorted(os.listdir(path)):
+            item_path = os.path.join(path, item_name)
+            
+            if os.path.isdir(item_path):
+                items.append({
+                    "name": item_name,
+                    "path": item_path,
+                    "type": "directory"
+                })
+            else:
+                # Check if it's an M4B file
+                is_m4b = item_name.lower().endswith('.m4b')
+                file_size = os.path.getsize(item_path) if os.path.exists(item_path) else 0
+                
+                items.append({
+                    "name": item_name,
+                    "path": item_path,
+                    "type": "file",
+                    "size": file_size,
+                    "isM4B": is_m4b
+                })
+        
+        logger.info(f"Returning {len(items)} items from {path}")
+        return {"items": items, "currentPath": path}
+        
+    except HTTPException as he:
+        logger.error(f"HTTPException: {he}")
+        raise
+    except Exception as e:
+        logger.error(f"Error browsing library: {repr(e)}")
+        logger.error(f"Error type: {type(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error browsing library: {repr(e)}")
+
+@app.post("/library/retag")
+async def retag_m4b_file(request: RetagRequest):
+    """Move an M4B file to the toTag folder and clean up the book folder"""
+    try:
+        file_path = request.file_path
+        
+        # Validate the file exists and is an M4B file
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        if not file_path.lower().endswith('.m4b'):
+            raise HTTPException(status_code=400, detail="File is not an M4B file")
+        
+        # Get the book folder (parent directory of the M4B file)
+        book_folder = os.path.dirname(file_path)
+        file_name = os.path.basename(file_path)
+        
+        # Define paths
+        to_tag_folder = "/app/toTag"
+        destination_path = os.path.join(to_tag_folder, file_name)
+        
+        # Ensure toTag folder exists
+        os.makedirs(to_tag_folder, exist_ok=True)
+        
+        # Move the M4B file to toTag folder
+        import shutil
+        shutil.move(file_path, destination_path)
+        
+        # Remove the book folder and all its contents
+        if os.path.exists(book_folder):
+            shutil.rmtree(book_folder)
+            logger.info(f"Removed book folder: {book_folder}")
+        
+        logger.info(f"Moved M4B file {file_name} to toTag folder and cleaned up book folder")
+        log_to_db("INFO", f"Retagged M4B file: {file_name}")
+        
+        return {"message": f"Successfully moved {file_name} to retag queue and cleaned up book folder"}
+        
+    except Exception as e:
+        logger.error(f"Error retagging M4B file: {e}")
+        log_to_db("ERROR", f"Error retagging M4B file: {e}")
+        raise HTTPException(status_code=500, detail=f"Error retagging file: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     import logging.config

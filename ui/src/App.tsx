@@ -10,6 +10,7 @@ import Layout from "./components/Layout";
 import { DarkModeProvider } from "./contexts/DarkModeContext";
 import Catalog from "./pages/Catalog";
 import Conversion from "./pages/Conversion";
+import Library from "./pages/Library";
 import Logs from "./pages/Logs";
 import Tagging from "./pages/Tagging";
 import Torrents from "./pages/Torrents";
@@ -31,6 +32,7 @@ const AppRoutes: React.FC = () => {
         <Route path="/torrents" element={<Torrents />} />
         <Route path="/tagging" element={<Tagging />} />
         <Route path="/conversions" element={<Conversion />} />
+        <Route path="/library" element={<Library />} />
         <Route path="/logs" element={<Logs />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

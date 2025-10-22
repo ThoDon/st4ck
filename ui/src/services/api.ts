@@ -157,4 +157,50 @@ export const yggService = {
   },
 };
 
+// Library service
+export interface LibraryItem {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  size?: number;
+  isM4B?: boolean;
+  children?: LibraryItem[];
+}
+
+export interface LibraryResponse {
+  items: LibraryItem[];
+  currentPath: string;
+}
+
+export const libraryService = {
+  async getLibraryItems(path?: string): Promise<LibraryResponse> {
+    if (!path) {
+      const response = await api.get("/library");
+      return response.data;
+    } else {
+      const response = await api.get("/library/browse", {
+        params: { path },
+      });
+      return response.data;
+    }
+  },
+
+  async retagM4BFile(filePath: string): Promise<void> {
+    await api.post("/library/retag", {
+      file_path: filePath,
+    });
+  },
+};
+
+// Combined API service for easier imports
+export const apiService = {
+  ...downloadService,
+  ...torrentService,
+  ...taggingService,
+  ...logService,
+  ...conversionService,
+  ...yggService,
+  ...libraryService,
+};
+
 export default api;
