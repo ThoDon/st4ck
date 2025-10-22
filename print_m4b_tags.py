@@ -59,7 +59,7 @@ def print_m4b_tags(file_path):
             else:
                 print(f"{tag_name:15}: N/A")
         
-        # iTunes custom tags
+        # iTunes custom tags (MP3Tag Audible API specification)
         custom_tags = {
             'ASIN': '----:com.apple.iTunes:ASIN',
             'Language': '----:com.apple.iTunes:LANGUAGE',
@@ -70,11 +70,19 @@ def print_m4b_tags(file_path):
             'Series': '----:com.apple.iTunes:SERIES',
             'Series Part': '----:com.apple.iTunes:SERIES-PART',
             'Rating': '----:com.apple.iTunes:RATING',
+            'Rating WMP': '----:com.apple.iTunes:RATING WMP',
             'Explicit': '----:com.apple.iTunes:EXPLICIT',
             'Publisher': '----:com.apple.iTunes:PUBLISHER',
             'Description': '----:com.apple.iTunes:DESCRIPTION',
             'Genres': '----:com.apple.iTunes:GENRES',
-            'ISBN': '----:com.apple.iTunes:ISBN'
+            'ISBN': '----:com.apple.iTunes:ISBN',
+            'WWW Audio File': '----:com.apple.iTunes:WWWAUDIOFILE',
+            'iTunes Advisory': '----:com.apple.iTunes:ITUNESADVISORY',
+            'Movement': '----:com.apple.iTunes:MOVEMENT',
+            'Movement Name': '----:com.apple.iTunes:MOVEMENTNAME',
+            'TMP Genre 1': '----:com.apple.iTunes:TMP_GENRE1',
+            'TMP Genre 2': '----:com.apple.iTunes:TMP_GENRE2',
+            'Composer': '----:com.apple.iTunes:COMPOSER'
         }
         
         print("\n🏷️  CUSTOM TAGS:")
@@ -82,6 +90,33 @@ def print_m4b_tags(file_path):
         for tag_name, tag_key in custom_tags.items():
             if tag_key in audio:
                 value = audio[tag_key][0] if audio[tag_key] else "N/A"
+                print(f"{tag_name:15}: {format_value(value)}")
+            else:
+                print(f"{tag_name:15}: N/A")
+        
+        # Additional MP3Tag fields
+        additional_tags = {
+            'Album Sort': 'soal',
+            'Content Group': '\xa9grp',
+            'Publisher Alt': '\xa9pub',
+            'Narrator Alt': '\xa9nrt',
+            'Series Alt': '\xa9mvn',
+            'Description Alt': 'desc',
+            'Description Alt2': '\xa9des',
+            'ASIN Alt': 'asin',
+            'CDEK ASIN': 'CDEK',
+            'Show Movement': 'shwm',
+            'Stick': 'stik',
+            'Gapless': 'pgap'
+        }
+        
+        print("\n🔧 ADDITIONAL TAGS:")
+        print("-" * 40)
+        for tag_name, tag_key in additional_tags.items():
+            if tag_key in audio:
+                value = audio[tag_key]
+                if isinstance(value, list) and len(value) > 0:
+                    value = value[0]
                 print(f"{tag_name:15}: {format_value(value)}")
             else:
                 print(f"{tag_name:15}: N/A")

@@ -100,145 +100,24 @@ class M4BTagger:
             return False
     
     def _set_basic_tags(self, audio: MP4, book_data: BookDataType):
-        """Set basic M4B tags"""
-        # Title
-        if book_data.title:
-            audio["\xa9nam"] = [book_data.title]
+        """Set basic M4B tags matching MP3Tag Audible API specification"""
         
-        # Album (same as title for audiobooks)
+        # ALBUM: Title
         if book_data.title:
             audio["\xa9alb"] = [book_data.title]
         
-        # Artist (author) - get first author name
+        # ALBUMARTIST: Author (first author only)
         if book_data.authors:
             author_name = book_data.authors[0].name
-            audio["\xa9ART"] = [author_name]
             audio["aART"] = [author_name]
         
-        # Year
-        if book_data.publication_datetime:
-            year = self._extract_year(book_data.publication_datetime)
-            if year:
-                audio["\xa9day"] = [year]
-        elif book_data.release_date:
-            year = self._extract_year(book_data.release_date)
-            if year:
-                audio["\xa9day"] = [year]
+        # ALBUMARTISTS: List of authors
+        if book_data.authors:
+            author_names = [author.name for author in book_data.authors]
+            album_artists_str = ", ".join(author_names)
+            audio["----:com.apple.iTunes:ALBUMARTISTS"] = [MP4FreeForm(album_artists_str.encode("utf-8"))]
         
-        # Genre
-        audio["\xa9gen"] = ["Audiobook"]
-        
-        # Comment - use best available description
-        description = (book_data.publisher_summary or 
-                      book_data.extended_product_description or 
-                      book_data.merchandising_summary or "")
-        if description:
-            # Truncate description if too long
-            if len(description) > 500:
-                description = description[:500] + "..."
-            audio["\xa9cmt"] = [description]
-        
-        # Copyright - use publisher name
-        if book_data.publisher_name:
-            audio["\xa9cpy"] = [book_data.publisher_name]
-    
-    def _set_custom_tags(self, audio: MP4, book_data: BookDataType):
-        """Set custom iTunes tags"""
-        # ASIN
-        if book_data.asin:
-            logger.info(f"Processing ASIN: {book_data.asin} (type: {type(book_data.asin)})")
-            asin_tag = MP4FreeForm(book_data.asin.encode("utf-8"))
-            audio[TagConstants.ASIN] = [asin_tag]
-            audio[TagConstants.AUDIBLE_ASIN] = [asin_tag]
-        
-        # Language
-        if book_data.language:
-            lang_tag = MP4FreeForm(book_data.language.encode("utf-8"))
-            audio[TagConstants.LANGUAGE] = [lang_tag]
-        
-        # Format
-        format_tag = MP4FreeForm(b"Audiobook")
-        audio[TagConstants.FORMAT] = [format_tag]
-        
-        # Series information (use only first series for MP4 tags)
-        if book_data.series:
-            series_title = book_data.series[0].title
-            if series_title:
-                series_tag = MP4FreeForm(series_title.encode("utf-8"))
-                audio[TagConstants.SERIES] = [series_tag]
-            
-            series_part = book_data.series[0].sequence
-            if series_part:
-                series_part_tag = MP4FreeForm(series_part.encode("utf-8"))
-                audio[TagConstants.SERIES_PART] = [series_part_tag]
-        
-        # Narrator (composer field)
-        if book_data.narrators:
-            narrator_names = [narrator.name for narrator in book_data.narrators]
-            narrator_str = ", ".join(narrator_names)
-            logger.info(f"Processing narrator: {narrator_str} (type: {type(narrator_str)})")
-            audio[TagConstants.COMPOSER] = [narrator_str]
-        
-        # Publisher
-        if book_data.publisher_name:
-            publisher_tag = MP4FreeForm(book_data.publisher_name.encode("utf-8"))
-            audio[TagConstants.PUBLISHER] = [publisher_tag]
-        
-        # Description
-        description = (book_data.publisher_summary or 
-                      book_data.extended_product_description or 
-                      book_data.merchandising_summary or "")
-        if description:
-            desc_tag = MP4FreeForm(description.encode("utf-8"))
-            audio[TagConstants.DESCRIPTION] = [desc_tag]
-        
-        # Genres (from category ladders)
-        if book_data.category_ladders:
-            genres = []
-            for ladder_group in book_data.category_ladders:
-                for ladder in ladder_group.ladder:
-                    genres.append(ladder.name)
-            if genres:
-                genres_str = "; ".join(genres)
-                genres_tag = MP4FreeForm(genres_str.encode("utf-8"))
-                audio[TagConstants.GENRES] = [genres_tag]
-        
-        # ISBN (if available in metadata)
-        if hasattr(book_data, 'isbn') and book_data.isbn:
-            isbn_tag = MP4FreeForm(book_data.isbn.encode("utf-8"))
-            audio[TagConstants.ISBN] = [isbn_tag]
-        
-        # Add alternative tags for better MP3Tag compatibility
-        if book_data.asin:
-            # Add ASIN in alternative formats
-            audio[TagConstants.SIMPLE_ASIN] = [book_data.asin]
-            audio[TagConstants.CDEK_ASIN] = [book_data.asin]
-        
-        # Add narrator in alternative format
-        if book_data.narrators:
-            narrator_names = [narrator.name for narrator in book_data.narrators]
-            narrator_str = ", ".join(narrator_names)
-            audio[TagConstants.NARRATOR_ALT] = [narrator_str]
-        
-        # Add publisher in alternative format
-        if book_data.publisher_name:
-            audio[TagConstants.PUBLISHER_ALT] = [book_data.publisher_name]
-        
-        # Add series in alternative format
-        if book_data.series:
-            series_title = book_data.series[0].title
-            if series_title:
-                audio[TagConstants.SERIES_ALT] = [series_title]
-        
-        # Add description in alternative format
-        description = (book_data.publisher_summary or 
-                      book_data.extended_product_description or 
-                      book_data.merchandising_summary or "")
-        if description:
-            audio[TagConstants.DESC_ALT] = [description]
-            audio[TagConstants.DESC_ALT2] = [description]
-        
-        # Add album sort (for series)
+        # ALBUMSORT: Series Series-Part - Title (if series), otherwise Title
         if book_data.series and book_data.title:
             series_title = book_data.series[0].title
             series_part = book_data.series[0].sequence
@@ -248,20 +127,222 @@ class M4BTagger:
                 album_sort = f"{series_title} - {book_data.title}"
             else:
                 album_sort = book_data.title
-            audio[TagConstants.ALBUM_SORT] = [album_sort]
+            audio["soal"] = [album_sort]
+        elif book_data.title:
+            audio["soal"] = [book_data.title]
         
-        # Add group tag for series
+        # ARTIST: Author, Narrator (combined)
+        artist_parts = []
+        if book_data.authors:
+            author_names = [author.name for author in book_data.authors]
+            artist_parts.extend(author_names)
+        if book_data.narrators:
+            narrator_names = [narrator.name for narrator in book_data.narrators]
+            artist_parts.extend(narrator_names)
+        if artist_parts:
+            audio["\xa9ART"] = [", ".join(artist_parts)]
+        
+        # YEAR: Audiobook Release Year
+        if book_data.publication_datetime:
+            year = self._extract_year(book_data.publication_datetime)
+            if year:
+                audio["\xa9day"] = [year]
+        elif book_data.release_date:
+            year = self._extract_year(book_data.release_date)
+            if year:
+                audio["\xa9day"] = [year]
+        
+        # GENRE: Genre1 / Genre2 (uses configured delimiter for multiple values)
+        if book_data.category_ladders:
+            genres = []
+            for ladder_group in book_data.category_ladders:
+                for ladder in ladder_group.ladder:
+                    genres.append(ladder.name)
+            if genres:
+                delimiter = "/"  # Default delimiter
+                audio["\xa9gen"] = [delimiter.join(genres)]
+        else:
+            audio["\xa9gen"] = ["Audiobook"]
+        
+        # COMMENT: Publisher's Summary (MP3)
+        description = (book_data.publisher_summary or 
+                      book_data.extended_product_description or 
+                      book_data.merchandising_summary or "")
+        if description:
+            # Truncate description if too long
+            if len(description) > 500:
+                description = description[:500] + "..."
+            audio["\xa9cmt"] = [description]
+        
+        # COPYRIGHT: Copyright
+        if book_data.publisher_name:
+            audio["\xa9cpy"] = [book_data.publisher_name]
+    
+    def _set_custom_tags(self, audio: MP4, book_data: BookDataType):
+        """Set custom iTunes tags matching MP3Tag Audible API specification"""
+        
+        # ASIN: Amazon Standard Identification Number
+        if book_data.asin:
+            asin_tag = MP4FreeForm(book_data.asin.encode("utf-8"))
+            audio["----:com.apple.iTunes:ASIN"] = [asin_tag]
+            audio["----:com.apple.iTunes:AUDIBLE_ASIN"] = [asin_tag]
+            # Alternative ASIN tags
+            audio["asin"] = [book_data.asin]
+            audio["CDEK"] = [book_data.asin]
+        
+        # COMPOSER: Narrator
+        if book_data.narrators:
+            narrator_names = [narrator.name for narrator in book_data.narrators]
+            narrator_str = ", ".join(narrator_names)
+            audio["\xa9wrt"] = [narrator_str]
+            # Alternative narrator tag
+            audio["\xa9nrt"] = [narrator_str]
+        
+        # CONTENTGROUP: Series, Book #
         if book_data.series:
             series_title = book_data.series[0].title
             series_part = book_data.series[0].sequence
             if series_title and series_part:
-                group_tag = f"{series_title}, Book #{series_part}"
+                content_group = f"{series_title}, Book #{series_part}"
             elif series_title:
-                group_tag = series_title
+                content_group = series_title
             else:
-                group_tag = ""
-            if group_tag:
-                audio[TagConstants.GROUP] = [group_tag]
+                content_group = ""
+            if content_group:
+                audio["\xa9grp"] = [content_group]
+        
+        # DESCRIPTION: Publisher's Summary (M4B)
+        description = (book_data.publisher_summary or 
+                      book_data.extended_product_description or 
+                      book_data.merchandising_summary or "")
+        if description:
+            desc_tag = MP4FreeForm(description.encode("utf-8"))
+            audio["----:com.apple.iTunes:DESCRIPTION"] = [desc_tag]
+            # Alternative description tags
+            audio["desc"] = [description]
+            audio["\xa9des"] = [description]
+        
+        # EXPLICIT: 1 if adult content
+        if hasattr(book_data, 'is_adult_product') and book_data.is_adult_product:
+            audio["----:com.apple.iTunes:EXPLICIT"] = [MP4FreeForm(b"1")]
+        else:
+            audio["----:com.apple.iTunes:EXPLICIT"] = [MP4FreeForm(b"0")]
+        
+        # FORMAT: Format type (e.g., unabridged)
+        if hasattr(book_data, 'format_type') and book_data.format_type:
+            format_tag = MP4FreeForm(book_data.format_type.encode("utf-8"))
+            audio["----:com.apple.iTunes:FORMAT"] = [format_tag]
+        else:
+            format_tag = MP4FreeForm(b"unabridged")
+            audio["----:com.apple.iTunes:FORMAT"] = [format_tag]
+        
+        # ISBN: International Standard Book Number
+        if hasattr(book_data, 'isbn') and book_data.isbn:
+            isbn_tag = MP4FreeForm(book_data.isbn.encode("utf-8"))
+            audio["----:com.apple.iTunes:ISBN"] = [isbn_tag]
+        
+        # ITUNESADVISORY: 1 = Adult content, 2 = Clean (M4B)
+        if hasattr(book_data, 'is_adult_product') and book_data.is_adult_product:
+            audio["----:com.apple.iTunes:ITUNESADVISORY"] = [MP4FreeForm(b"1")]
+        else:
+            audio["----:com.apple.iTunes:ITUNESADVISORY"] = [MP4FreeForm(b"2")]
+        
+        # ITUNESGAPLESS: 1 if M4B album is gapless
+        audio["pgap"] = [True]
+        
+        # ITUNESMEDIATYPE: Audiobook
+        audio["stik"] = [2]  # 2 = Audiobook
+        
+        # LANGUAGE: Language
+        if book_data.language:
+            lang_tag = MP4FreeForm(book_data.language.encode("utf-8"))
+            audio["----:com.apple.iTunes:LANGUAGE"] = [lang_tag]
+        
+        # MOVEMENT: Series Book #
+        if book_data.series:
+            series_part = book_data.series[0].sequence
+            if series_part:
+                audio["----:com.apple.iTunes:MOVEMENT"] = [MP4FreeForm(str(series_part).encode("utf-8"))]
+        
+        # MOVEMENTNAME: Series
+        if book_data.series:
+            series_title = book_data.series[0].title
+            if series_title:
+                audio["----:com.apple.iTunes:MOVEMENTNAME"] = [MP4FreeForm(series_title.encode("utf-8"))]
+        
+        # PUBLISHER: Publisher
+        if book_data.publisher_name:
+            publisher_tag = MP4FreeForm(book_data.publisher_name.encode("utf-8"))
+            audio["----:com.apple.iTunes:PUBLISHER"] = [publisher_tag]
+            # Alternative publisher tag
+            audio["\xa9pub"] = [book_data.publisher_name]
+        
+        # RATING WMP: Audible Rating (MP3)
+        if hasattr(book_data, 'rating') and book_data.rating:
+            rating_tag = MP4FreeForm(str(book_data.rating).encode("utf-8"))
+            audio["----:com.apple.iTunes:RATING WMP"] = [rating_tag]
+        
+        # RATING: Audible Rating
+        if hasattr(book_data, 'rating') and book_data.rating:
+            rating_tag = MP4FreeForm(str(book_data.rating).encode("utf-8"))
+            audio["----:com.apple.iTunes:RATING"] = [rating_tag]
+        
+        # RELEASETIME: Audiobook Release Date
+        if book_data.publication_datetime:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(book_data.publication_datetime.replace("Z", "+00:00"))
+                release_time = dt.strftime("%Y-%m-%d")
+                audio["----:com.apple.iTunes:RELEASETIME"] = [MP4FreeForm(release_time.encode("utf-8"))]
+            except:
+                # Fallback to first 10 characters
+                release_time = book_data.publication_datetime[:10]
+                audio["----:com.apple.iTunes:RELEASETIME"] = [MP4FreeForm(release_time.encode("utf-8"))]
+        
+        # SERIES-PART: Series Book #
+        if book_data.series:
+            series_part = book_data.series[0].sequence
+            if series_part:
+                series_part_tag = MP4FreeForm(str(series_part).encode("utf-8"))
+                audio["----:com.apple.iTunes:SERIES-PART"] = [series_part_tag]
+        
+        # SERIES: Series
+        if book_data.series:
+            series_title = book_data.series[0].title
+            if series_title:
+                series_tag = MP4FreeForm(series_title.encode("utf-8"))
+                audio["----:com.apple.iTunes:SERIES"] = [series_tag]
+                # Alternative series tag
+                audio["\xa9mvn"] = [series_title]
+        
+        # SHOWMOVEMENT: 1 if Series (M4B movement flag), otherwise omitted
+        if book_data.series:
+            audio["shwm"] = [1]
+        
+        # SUBTITLE: Subtitle
+        if hasattr(book_data, 'subtitle') and book_data.subtitle:
+            subtitle_tag = MP4FreeForm(book_data.subtitle.encode("utf-8"))
+            audio["----:com.apple.iTunes:SUBTITLE"] = [subtitle_tag]
+        
+        # TMP_GENRE1: Genre 1 (if single-genre-only config is enabled)
+        # TMP_GENRE2: Genre 2 (if single-genre-only config is enabled)
+        if book_data.category_ladders:
+            genres = []
+            for ladder_group in book_data.category_ladders:
+                for ladder in ladder_group.ladder:
+                    genres.append(ladder.name)
+            if genres:
+                # Set first genre in TMP_GENRE1
+                audio["----:com.apple.iTunes:TMP_GENRE1"] = [MP4FreeForm(genres[0].encode("utf-8"))]
+                # Set second genre in TMP_GENRE2 if available
+                if len(genres) > 1:
+                    audio["----:com.apple.iTunes:TMP_GENRE2"] = [MP4FreeForm(genres[1].encode("utf-8"))]
+        
+        # WWWAUDIOFILE: Audible Album URL
+        if book_data.asin:
+            locale = "fr"  # Default locale, could be configurable
+            audible_url = f"https://www.audible.{locale}/pd/{book_data.asin}"
+            audio["----:com.apple.iTunes:WWWAUDIOFILE"] = [MP4FreeForm(audible_url.encode("utf-8"))]
     
     def _add_cover(self, audio: MP4, cover_path: str):
         """Add cover art to the M4B file"""
