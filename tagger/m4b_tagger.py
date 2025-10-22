@@ -117,19 +117,35 @@ class M4BTagger:
             album_artists_str = ", ".join(author_names)
             audio["----:com.apple.iTunes:ALBUMARTISTS"] = [MP4FreeForm(album_artists_str.encode("utf-8"))]
         
-        # ALBUMSORT: Series Series-Part - Title (if series), otherwise Title
+        # ALBUMSORT: Series Series-Part - Title, Subtitle (if series), otherwise Title, Subtitle
         if book_data.series and book_data.title:
             series_title = book_data.series[0].title
             series_part = book_data.series[0].sequence
+            subtitle = getattr(book_data, 'subtitle', None) or ""
+            
             if series_title and series_part:
-                album_sort = f"{series_title} {series_part} - {book_data.title}"
+                if subtitle:
+                    album_sort = f"{series_title} {series_part} - {book_data.title}, {subtitle}"
+                else:
+                    album_sort = f"{series_title} {series_part} - {book_data.title}"
             elif series_title:
-                album_sort = f"{series_title} - {book_data.title}"
+                if subtitle:
+                    album_sort = f"{series_title} - {book_data.title}, {subtitle}"
+                else:
+                    album_sort = f"{series_title} - {book_data.title}"
+            else:
+                if subtitle:
+                    album_sort = f"{book_data.title}, {subtitle}"
+                else:
+                    album_sort = book_data.title
+            audio["soal"] = [album_sort]
+        elif book_data.title:
+            subtitle = getattr(book_data, 'subtitle', None) or ""
+            if subtitle:
+                album_sort = f"{book_data.title}, {subtitle}"
             else:
                 album_sort = book_data.title
             audio["soal"] = [album_sort]
-        elif book_data.title:
-            audio["soal"] = [book_data.title]
         
         # ARTIST: Author, Narrator (combined)
         artist_parts = []
@@ -169,10 +185,11 @@ class M4BTagger:
                       book_data.extended_product_description or 
                       book_data.merchandising_summary or "")
         if description:
-            # Truncate description if too long
-            if len(description) > 500:
-                description = description[:500] + "..."
-            audio["\xa9cmt"] = [description]
+            # Clean HTML tags and truncate if too long
+            clean_description = self._clean_html(description)
+            if len(clean_description) > 500:
+                clean_description = clean_description[:500] + "..."
+            audio["\xa9cmt"] = [clean_description]
         
         # COPYRIGHT: Copyright
         if book_data.publisher_name:
@@ -216,11 +233,13 @@ class M4BTagger:
                       book_data.extended_product_description or 
                       book_data.merchandising_summary or "")
         if description:
-            desc_tag = MP4FreeForm(description.encode("utf-8"))
+            # Clean HTML tags
+            clean_description = self._clean_html(description)
+            desc_tag = MP4FreeForm(clean_description.encode("utf-8"))
             audio["----:com.apple.iTunes:DESCRIPTION"] = [desc_tag]
             # Alternative description tags
-            audio["desc"] = [description]
-            audio["\xa9des"] = [description]
+            audio["desc"] = [clean_description]
+            audio["\xa9des"] = [clean_description]
         
         # EXPLICIT: 1 if adult content
         if hasattr(book_data, 'is_adult_product') and book_data.is_adult_product:
@@ -373,6 +392,22 @@ class M4BTagger:
         
         return None
     
+    def _clean_html(self, text: str) -> str:
+        """Remove HTML tags from text content"""
+        import re
+        if not text:
+            return ""
+        
+        # Remove HTML tags
+        clean_text = re.sub(r'<[^>]+>', '', text)
+        # Decode HTML entities
+        clean_text = clean_text.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
+        clean_text = clean_text.replace('&quot;', '"').replace('&#39;', "'")
+        # Clean up extra whitespace
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+        
+        return clean_text
+    
     def move_to_library(self, file_path: Path, book_data: BookDataType, cover_path: Optional[str] = None) -> Optional[Path]:
         """Move tagged file to library with organized structure"""
         try:
@@ -466,6 +501,8 @@ class M4BTagger:
             description = (metadata.publisher_summary or 
                           metadata.extended_product_description or 
                           metadata.merchandising_summary or "")
+            # Clean HTML tags from description
+            description = self._clean_html(description)
             narrator_names = [narrator.name for narrator in metadata.narrators] if metadata.narrators else []
             narrator = ", ".join(narrator_names)
             series = metadata.series[0].title if metadata.series else ""
@@ -550,9 +587,11 @@ class M4BTagger:
                           metadata.extended_product_description or 
                           metadata.merchandising_summary or "")
             if description:
+                # Clean HTML tags from description
+                clean_description = self._clean_html(description)
                 desc_file = dest_dir / "desc.txt"
                 with open(desc_file, "w", encoding="utf-8") as f:
-                    f.write(description)
+                    f.write(clean_description)
             
             # Create reader.txt (narrator)
             if metadata.narrators:

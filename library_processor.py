@@ -8,8 +8,24 @@ import sys
 import os
 import json
 import requests
+import re
 from pathlib import Path
 from mutagen.mp4 import MP4, MP4FreeForm
+
+def clean_html(text: str) -> str:
+    """Remove HTML tags from text content"""
+    if not text:
+        return ""
+    
+    # Remove HTML tags
+    clean_text = re.sub(r'<[^>]+>', '', text)
+    # Decode HTML entities
+    clean_text = clean_text.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
+    clean_text = clean_text.replace('&quot;', '"').replace('&#39;', "'")
+    # Clean up extra whitespace
+    clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+    
+    return clean_text
 import argparse
 
 class LibraryProcessor:
@@ -213,13 +229,19 @@ class LibraryProcessor:
                 description = product_data["product_desc"]
             
             if description:
-                # Truncate if too long
-                if len(description) > 500:
-                    description = description[:500] + "..."
-                audio["\xa9cmt"] = [description]
-                audio["desc"] = [description]
-                audio["\xa9des"] = [description]
-                audio["----:com.apple.iTunes:DESCRIPTION"] = [MP4FreeForm(description.encode("utf-8"))]
+                # Clean HTML tags and truncate if too long
+                clean_description = clean_html(description)
+                if len(clean_description) > 500:
+                    clean_description = clean_description[:500] + "..."
+                audio["\xa9cmt"] = [clean_description]
+                audio["desc"] = [clean_description]
+                audio["\xa9des"] = [clean_description]
+                audio["----:com.apple.iTunes:DESCRIPTION"] = [MP4FreeForm(clean_description.encode("utf-8"))]
+            
+            # Subtitle
+            subtitle = product_data.get("subtitle", "")
+            if subtitle:
+                audio["----:com.apple.iTunes:SUBTITLE"] = [MP4FreeForm(subtitle.encode("utf-8"))]
             
             # ASIN
             asin = product_data.get("asin", "")
@@ -264,11 +286,30 @@ class LibraryProcessor:
                     audio["----:com.apple.iTunes:SERIES-PART"] = [MP4FreeForm(str(series_part).encode("utf-8"))]
                     audio["----:com.apple.iTunes:MOVEMENT"] = [MP4FreeForm(str(series_part).encode("utf-8"))]
                 
-                # Album sort
+                # Album sort with subtitle
+                subtitle = product_data.get("subtitle", "")
                 if series_title and series_part:
-                    album_sort = f"{series_title} {series_part} - {title}"
+                    if subtitle:
+                        album_sort = f"{series_title} {series_part} - {title}, {subtitle}"
+                    else:
+                        album_sort = f"{series_title} {series_part} - {title}"
                 elif series_title:
-                    album_sort = f"{series_title} - {title}"
+                    if subtitle:
+                        album_sort = f"{series_title} - {title}, {subtitle}"
+                    else:
+                        album_sort = f"{series_title} - {title}"
+                else:
+                    if subtitle:
+                        album_sort = f"{title}, {subtitle}"
+                    else:
+                        album_sort = title
+                audio["soal"] = [album_sort]
+            
+            # Handle album sort for non-series books
+            if not product_data.get("series"):
+                subtitle = product_data.get("subtitle", "")
+                if subtitle:
+                    album_sort = f"{title}, {subtitle}"
                 else:
                     album_sort = title
                 audio["soal"] = [album_sort]
