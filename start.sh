@@ -10,14 +10,12 @@ create_env_file() {
             cp .env.example .env
             echo "✅ Created .env file from template."
             echo "📝 Please edit .env with your configuration:"
-            echo "   - RSS_FEED_URL: Set to your actual RSS feed"
             echo "   - TRANSMISSION_USER/PASS: Change from default admin/admin"
             echo "   - VITE_API_URL: Update for production if needed"
         else
             echo "⚠️  No .env file found. Creating basic configuration..."
             cat > .env << EOF
 # RSS Feed Configuration
-RSS_FEED_URL=https://example.com/feed.xml
 
 # Transmission Configuration
 TRANSMISSION_USER=admin

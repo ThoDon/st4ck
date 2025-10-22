@@ -115,6 +115,7 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - TAGGER_SCAN_INTERVAL=${TAGGER_SCAN_INTERVAL:-60}
     depends_on:
       - dir-init
       - api

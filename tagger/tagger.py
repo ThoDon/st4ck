@@ -5,6 +5,7 @@ import requests
 import json
 import redis
 import signal
+import threading
 from datetime import datetime
 from pathlib import Path
 import logging
@@ -14,13 +15,15 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class TaggerService:
-    def __init__(self, api_url="http://api:8000", redis_host="redis", redis_port=6379):
+    def __init__(self, api_url="http://api:8000", redis_host="redis", redis_port=6379, scan_interval=60):
         self.api_url = api_url
         self.to_tag_path = Path("/toTag")
         self.redis_host = redis_host
         self.redis_port = redis_port
         self.redis_client = None
         self.running = True
+        self.scan_interval = scan_interval  # Scan interval in seconds (default: 60 seconds = 1 minute)
+        self.scan_timer = None
         
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -58,6 +61,8 @@ class TaggerService:
         """Handle shutdown signals"""
         logger.info(f"Received signal {signum}, shutting down gracefully...")
         self.running = False
+        if self.scan_timer:
+            self.scan_timer.cancel()
     
     def connect_redis(self) -> bool:
         """Connect to Redis server"""
@@ -183,6 +188,23 @@ class TaggerService:
         except Exception as e:
             logger.error(f"Error in report_to_api: {e}")
     
+    def _periodic_scan(self):
+        """Periodic scan method that runs every scan_interval seconds"""
+        if not self.running:
+            return
+            
+        try:
+            logger.info("🔄 Periodic scan triggered")
+            self.scan_to_tag_directory()
+        except Exception as e:
+            logger.error(f"Error in periodic scan: {e}")
+            self.log_to_api("ERROR", f"Error in periodic scan: {e}")
+        
+        # Schedule the next scan
+        if self.running:
+            self.scan_timer = threading.Timer(self.scan_interval, self._periodic_scan)
+            self.scan_timer.start()
+    
     def start(self):
         """Start the tagger service"""
         logger.info("🏷️ Tagger service started")
@@ -200,6 +222,11 @@ class TaggerService:
         # Scan existing files on startup
         self.scan_to_tag_directory()
         
+        # Start periodic scanning
+        logger.info(f"⏰ Starting periodic scan every {self.scan_interval} seconds")
+        self.scan_timer = threading.Timer(self.scan_interval, self._periodic_scan)
+        self.scan_timer.start()
+        
         # Create pub/sub object
         pubsub = self.redis_client.pubsub()
         
@@ -207,7 +234,7 @@ class TaggerService:
         pubsub.subscribe("audiobook:conversion_complete")
         
         logger.info("👀 Listening for conversion complete events...")
-        self.log_to_api("INFO", "Tagger service started and listening for Redis events")
+        self.log_to_api("INFO", f"Tagger service started with periodic scan every {self.scan_interval} seconds")
         
         try:
             # Main event loop
@@ -243,6 +270,8 @@ class TaggerService:
         
         finally:
             # Cleanup
+            if self.scan_timer:
+                self.scan_timer.cancel()
             pubsub.close()
             if self.redis_client:
                 self.redis_client.close()
@@ -272,7 +301,10 @@ def wait_for_api(api_url="http://api:8000", max_retries=30):
 
 def main():
     """Main function"""
-    service = TaggerService()
+    # Get scan interval from environment variable (default: 60 seconds)
+    scan_interval = int(os.getenv("TAGGER_SCAN_INTERVAL", "60"))
+    
+    service = TaggerService(scan_interval=scan_interval)
     service.start()
 
 if __name__ == "__main__":
