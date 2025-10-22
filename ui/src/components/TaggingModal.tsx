@@ -261,6 +261,11 @@ const TaggingModal: React.FC<TaggingModalProps> = ({
                               <span>{formatDuration(book.duration)}</span>
                             </div>
                           )}
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs font-mono bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">
+                              ASIN: {book.asin}
+                            </span>
+                          </div>
                         </div>
                         {book.description && (
                           <p className="mt-2 text-xs text-gray-500 dark:text-gray-400 line-clamp-2">

@@ -80,6 +80,17 @@ class AudibleAPIClient:
             return True
         return False
 
+    def _is_illustrator_name(self, name: str) -> bool:
+        """Return True if the provided name likely denotes an illustrator/illustration credit."""
+        lowered = (name or "").lower()
+        # French variants: illustrateur / illustratrice, and words containing "illustr"
+        if "illustr" in lowered:
+            return True
+        # English variant
+        if "illustrator" in lowered:
+            return True
+        return False
+
     def _format_person_list(self, names: List[str]) -> str:
         """Join a list of names into a natural-language string."""
         names = [n.strip() for n in names if n and n.strip()]
@@ -99,7 +110,7 @@ class AudibleAPIClient:
         author_names = []
         for author in authors:
             name = author.get("name", "").strip()
-            if name and not self._is_translator_name(name):
+            if name and not self._is_translator_name(name) and not self._is_illustrator_name(name):
                 author_names.append(name)
         return self._format_person_list(author_names)
     
