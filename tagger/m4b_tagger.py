@@ -103,30 +103,30 @@ class M4BTagger:
         """Set basic M4B tags"""
         # Title
         if book_data.title:
-            audio[TagConstants.TITLE] = [book_data.title]
+            audio["\xa9nam"] = [book_data.title]
         
         # Album (same as title for audiobooks)
         if book_data.title:
-            audio[TagConstants.ALBUM] = [book_data.title]
+            audio["\xa9alb"] = [book_data.title]
         
         # Artist (author) - get first author name
         if book_data.authors:
             author_name = book_data.authors[0].name
-            audio[TagConstants.ARTIST] = [author_name]
-            audio[TagConstants.ALBUM_ARTIST] = [author_name]
+            audio["\xa9ART"] = [author_name]
+            audio["aART"] = [author_name]
         
         # Year
         if book_data.publication_datetime:
             year = self._extract_year(book_data.publication_datetime)
             if year:
-                audio[TagConstants.YEAR] = [year]
+                audio["\xa9day"] = [year]
         elif book_data.release_date:
             year = self._extract_year(book_data.release_date)
             if year:
-                audio[TagConstants.YEAR] = [year]
+                audio["\xa9day"] = [year]
         
         # Genre
-        audio[TagConstants.GENRE] = ["Audiobook"]
+        audio["\xa9gen"] = ["Audiobook"]
         
         # Comment - use best available description
         description = (book_data.publisher_summary or 
@@ -136,7 +136,11 @@ class M4BTagger:
             # Truncate description if too long
             if len(description) > 500:
                 description = description[:500] + "..."
-            audio[TagConstants.COMMENT] = [description]
+            audio["\xa9cmt"] = [description]
+        
+        # Copyright - use publisher name
+        if book_data.publisher_name:
+            audio["\xa9cpy"] = [book_data.publisher_name]
     
     def _set_custom_tags(self, audio: MP4, book_data: BookDataType):
         """Set custom iTunes tags"""

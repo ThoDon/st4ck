@@ -37,17 +37,17 @@ def print_m4b_tags(file_path):
                 return value[:100] + "..."
             return str(value)
         
-        # Basic tags - read from individual fields
+        # Basic tags - read from individual fields (using direct field names like old implementation)
         basic_tags = {
-            'Title': '©nam',
-            'Album': '©alb', 
-            'Artist': '©ART',
+            'Title': '\xa9nam',
+            'Album': '\xa9alb', 
+            'Artist': '\xa9ART',
             'Album Artist': 'aART',
-            'Composer': '©wrt',
-            'Year': '©day',
-            'Genre': '©gen',
-            'Comment': '©cmt',
-            'Copyright': '©cpy'
+            'Composer': '\xa9wrt',
+            'Year': '\xa9day',
+            'Genre': '\xa9gen',
+            'Comment': '\xa9cmt',
+            'Copyright': '\xa9cpy'
         }
         
         print("\n📖 BASIC TAGS:")
