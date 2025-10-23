@@ -111,6 +111,7 @@ class TaggingItem(BaseModel):
     status: str
     size: Optional[int] = None
     auto_tagged: Optional[bool] = False
+    message: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -121,6 +122,7 @@ class TaggingItemCreate(BaseModel):
     status: str = "waiting"
     size: Optional[int] = None
     auto_tagged: Optional[bool] = False
+    message: Optional[str] = None
 
 class AudibleSearchRequest(BaseModel):
     query: str
@@ -555,9 +557,10 @@ async def get_tagging_items():
                 folder=row[3],
                 status=row[4],
                 size=row[5],
-                auto_tagged=row[8] if len(row) > 8 else False,  # Handle existing records
-                created_at=row[6],
-                updated_at=row[7]
+                auto_tagged=row[6] if len(row) > 6 else False,  # Handle existing records
+                message=row[7] if len(row) > 7 else None,  # Handle existing records
+                created_at=row[8],
+                updated_at=row[9]
             ))
         conn.close()
         return items
@@ -584,16 +587,16 @@ async def create_tagging_item(item: TaggingItemCreate):
             # Update existing item
             cursor.execute('''
                 UPDATE tagging_items 
-                SET name = ?, folder = ?, status = ?, size = ?, auto_tagged = ?, updated_at = CURRENT_TIMESTAMP
+                SET name = ?, folder = ?, status = ?, size = ?, auto_tagged = ?, message = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE path = ?
-            ''', (item.name, item.folder, item.status, item.size, item.auto_tagged, item.path))
+            ''', (item.name, item.folder, item.status, item.size, item.auto_tagged, item.message, item.path))
             item_id = existing[0]
         else:
             # Create new item
             cursor.execute('''
-                INSERT INTO tagging_items (name, path, folder, status, size, auto_tagged)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (item.name, item.path, item.folder, item.status, item.size, item.auto_tagged))
+                INSERT INTO tagging_items (name, path, folder, status, size, auto_tagged, message)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (item.name, item.path, item.folder, item.status, item.size, item.auto_tagged, item.message))
             item_id = cursor.lastrowid
         
         conn.commit()
@@ -611,9 +614,10 @@ async def create_tagging_item(item: TaggingItemCreate):
                 folder=row[3],
                 status=row[4],
                 size=row[5],
-                auto_tagged=row[8] if len(row) > 8 else False,  # Handle existing records
-                created_at=row[6],
-                updated_at=row[7]
+                auto_tagged=row[6] if len(row) > 6 else False,  # Handle existing records
+                message=row[7] if len(row) > 7 else None,  # Handle existing records
+                created_at=row[8],
+                updated_at=row[9]
             )
         else:
             raise HTTPException(status_code=500, detail="Failed to create tagging item")

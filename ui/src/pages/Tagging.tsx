@@ -62,14 +62,21 @@ const Tagging: React.FC = () => {
       label: "Status",
       render: (item) => (
         <div className="flex items-center justify-center space-x-2">
-          {item.status === "completed" && (
+          {item.status === "completed" && !item.auto_tagged && (
             <CheckCircle className="w-4 h-4 text-green-500" />
           )}
           {item.status === "waiting" && (
             <Tag className="w-4 h-4 text-yellow-500" />
           )}
           {item.status === "processing" && (
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+            <div className="flex flex-col items-center space-y-1">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+              {item.message && (
+                <span className="text-xs text-blue-600 dark:text-blue-400 text-center max-w-32 truncate">
+                  {item.message}
+                </span>
+              )}
+            </div>
           )}
         </div>
       ),
@@ -94,17 +101,24 @@ const Tagging: React.FC = () => {
       label: "Actions",
       render: (item) => (
         <div className="flex items-center justify-center">
-          <ActionButton
-            icon={<Tag className="w-4 h-4" />}
-            onClick={() => handleTagItem(item)}
-            disabled={item.status !== "waiting"}
-            title={
-              item.status === "waiting"
-                ? "Tag this item"
-                : "Item not available for tagging"
-            }
-            className={getButtonClassName("single")}
-          />
+          {item.auto_tagged ? (
+            <div className="flex items-center space-x-1 text-blue-600 dark:text-blue-400">
+              <Bot className="w-4 h-4" />
+              <span className="text-sm font-medium">Auto-processed</span>
+            </div>
+          ) : (
+            <ActionButton
+              icon={<Tag className="w-4 h-4" />}
+              onClick={() => handleTagItem(item)}
+              disabled={item.status !== "waiting"}
+              title={
+                item.status === "waiting"
+                  ? "Tag this item"
+                  : "Item not available for tagging"
+              }
+              className={getButtonClassName("single")}
+            />
+          )}
         </div>
       ),
     },

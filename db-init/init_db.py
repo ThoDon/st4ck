@@ -40,6 +40,7 @@ def init_database():
             status TEXT DEFAULT 'waiting',
             size INTEGER,
             auto_tagged BOOLEAN DEFAULT 0,
+            message TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -50,6 +51,10 @@ def init_database():
     columns = [column[1] for column in cursor.fetchall()]
     if 'auto_tagged' not in columns:
         cursor.execute("ALTER TABLE tagging_items ADD COLUMN auto_tagged BOOLEAN DEFAULT 0")
+    
+    # Add message column to existing table if it doesn't exist
+    if 'message' not in columns:
+        cursor.execute("ALTER TABLE tagging_items ADD COLUMN message TEXT")
     
     # Create conversion_tracking table
     cursor.execute('''

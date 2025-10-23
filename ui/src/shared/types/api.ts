@@ -54,6 +54,7 @@ export interface TaggingItem {
   status: string;
   size?: number;
   auto_tagged?: boolean;
+  message?: string;
   created_at?: string;
   updated_at?: string;
 }
