@@ -21,14 +21,12 @@ export interface ConversionTracking {
   updated_at: string;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8081";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: { "Content-Type": "application/json" },
 });
-
-
 
 export const downloadService = {
   async getDownloads(): Promise<Download[]> {
@@ -42,7 +40,6 @@ export const torrentService = {
     const response = await api.get("/torrents");
     return response.data;
   },
-
 };
 
 export const taggingService = {
@@ -65,7 +62,11 @@ export const taggingService = {
     return response.data.results;
   },
 
-  async tagFileByAsin(filePath: string, asin: string, locale: string = "fr"): Promise<void> {
+  async tagFileByAsin(
+    filePath: string,
+    asin: string,
+    locale: string = "fr"
+  ): Promise<void> {
     await api.post("/tagging/tag-file-by-asin", {
       file_path: filePath,
       asin,
@@ -107,7 +108,6 @@ export const conversionService = {
   async cancelConversion(conversionId: number): Promise<void> {
     await api.post(`/conversions/${conversionId}/cancel`);
   },
-
 };
 
 // YGG Gateway service
@@ -134,22 +134,30 @@ export interface YGGSearchResponse {
 // Categories interfaces removed - YGG API doesn't provide categories
 
 export const yggService = {
-  async searchTorrents(query: string, category?: string, limit: number = 100, page: number = 1): Promise<YGGSearchResponse> {
+  async searchTorrents(
+    query: string,
+    category?: string,
+    limit: number = 100,
+    page: number = 1
+  ): Promise<YGGSearchResponse> {
     const params = new URLSearchParams({
       q: query,
       limit: limit.toString(),
       page: page.toString(),
     });
-    
+
     if (category) {
-      params.append('category', category);
+      params.append("category", category);
     }
-    
+
     const response = await api.get(`/ygg/search?${params.toString()}`);
     return response.data;
   },
 
-  async addTorrentToTransmission(torrentId: string, downloadType: string = "magnet"): Promise<void> {
+  async addTorrentToTransmission(
+    torrentId: string,
+    downloadType: string = "magnet"
+  ): Promise<void> {
     await api.post("/ygg/torrent/add", {
       torrent_id: torrentId,
       download_type: downloadType,

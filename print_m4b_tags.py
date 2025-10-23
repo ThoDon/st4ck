@@ -160,6 +160,17 @@ def find_m4b_files(library_path):
 
 def main():
     """Main function"""
+    # Check if a specific file path is provided
+    if len(sys.argv) > 1:
+        specific_file = sys.argv[1]
+        if os.path.exists(specific_file) and specific_file.lower().endswith('.m4b'):
+            print(f"🔍 Reading tags for specific file: {specific_file}")
+            print_m4b_tags(specific_file)
+            return
+        else:
+            print(f"❌ File not found or not an M4B file: {specific_file}")
+            return
+    
     # Default library path
     library_path = "/Users/donet/Downloads/st4ck/data/library"
     

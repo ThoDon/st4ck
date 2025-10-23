@@ -53,6 +53,7 @@ export interface TaggingItem {
   folder?: string;
   status: string;
   size?: number;
+  auto_tagged?: boolean;
   created_at?: string;
   updated_at?: string;
 }

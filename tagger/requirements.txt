@@ -3,3 +3,4 @@ redis==5.0.1
 mutagen==1.47.0
 colorama==0.4.6
 tqdm==4.66.1
+pydantic==2.5.0

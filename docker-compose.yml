@@ -112,6 +112,8 @@ services:
     container_name: tagger
     volumes:
       - ${DATA_DIR:-./data}/toTag:/toTag
+      - ${LIBRARY_DIR:-${DATA_DIR:-./data}/library}:/app/library
+      - ${DATA_DIR:-./data}/covers:/app/data/covers
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379

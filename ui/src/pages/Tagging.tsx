@@ -1,17 +1,17 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { CheckCircle, Tag, Clock } from "lucide-react";
+import { Bot, CheckCircle, Clock, Tag } from "lucide-react";
 import React, { useState } from "react";
-import TaggingModal from "../components/TaggingModal";
-import { useTaggingItems, QUERY_KEYS } from "../hooks/useFetching";
-import PageContainer from "../components/PageContainer";
-import PageHeader from "../components/PageHeader";
-import EmptyState from "../components/EmptyState";
-import LoadingSpinner from "../components/LoadingSpinner";
-import DataTable, { TableColumn } from "../components/DataTable";
 import {
   ActionButton,
   getButtonClassName,
 } from "../components/ActionButtonGroup";
+import DataTable, { TableColumn } from "../components/DataTable";
+import EmptyState from "../components/EmptyState";
+import LoadingSpinner from "../components/LoadingSpinner";
+import PageContainer from "../components/PageContainer";
+import PageHeader from "../components/PageHeader";
+import TaggingModal from "../components/TaggingModal";
+import { QUERY_KEYS, useTaggingItems } from "../hooks/useFetching";
 
 const Tagging: React.FC = () => {
   const queryClient = useQueryClient();
@@ -41,8 +41,18 @@ const Tagging: React.FC = () => {
       label: "Name",
       className: "max-w-lg truncate",
       render: (item) => (
-        <div className="font-medium text-gray-900 dark:text-white">
-          {item.name}
+        <div className="flex items-center space-x-2">
+          <div className="font-medium text-gray-900 dark:text-white">
+            {item.name}
+          </div>
+          {item.auto_tagged && (
+            <div className="flex items-center space-x-1">
+              <Bot className="w-4 h-4 text-blue-500" />
+              <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                Auto
+              </span>
+            </div>
+          )}
         </div>
       ),
     },

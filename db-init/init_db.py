@@ -39,10 +39,17 @@ def init_database():
             folder TEXT,
             status TEXT DEFAULT 'waiting',
             size INTEGER,
+            auto_tagged BOOLEAN DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    
+    # Add auto_tagged column to existing table if it doesn't exist
+    cursor.execute("PRAGMA table_info(tagging_items)")
+    columns = [column[1] for column in cursor.fetchall()]
+    if 'auto_tagged' not in columns:
+        cursor.execute("ALTER TABLE tagging_items ADD COLUMN auto_tagged BOOLEAN DEFAULT 0")
     
     # Create conversion_tracking table
     cursor.execute('''

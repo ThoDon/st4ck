@@ -16,6 +16,12 @@ COPY api/ .
 # Copy tagger module from build context
 COPY tagger ./tagger
 
+# Copy the print_m4b_tags script
+COPY print_m4b_tags.py .
+
+# Copy database initialization script
+COPY db-init ./db-init
+
 EXPOSE 8000
 
 CMD ["python", "main.py"]

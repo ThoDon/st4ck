@@ -298,8 +298,8 @@ class AudibleAPIClient:
                 import importlib.util
                 from pathlib import Path as _Path
                 types_path_candidates = [
-                    _Path(__file__).parent / "types.py",
-                    _Path("/app/tagger/types.py"),
+                    _Path(__file__).parent / "tagger_types.py",
+                    _Path("/app/tagger_types.py"),
                 ]
                 AudibleAPIResponse = None
                 for _p in types_path_candidates:

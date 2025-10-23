@@ -106,7 +106,7 @@ class TaggerService:
             self.log_to_api("ERROR", f"Error handling conversion complete: {e}")
     
     def scan_to_tag_directory(self):
-        """Scan toTag directory for new m4b files"""
+        """Scan toTag directory for new m4b files and auto-tag if ASIN is found"""
         try:
             if not self.to_tag_path.exists():
                 logger.warning("toTag directory does not exist")
@@ -119,6 +119,11 @@ class TaggerService:
             
             for m4b_file in m4b_files:
                 logger.info(f"🎵 Found m4b file: {m4b_file.name}")
+                
+                # Try to auto-tag if ASIN is found
+                if self.auto_tag_if_asin_found(m4b_file):
+                    continue  # Skip manual processing if auto-tagged
+                
                 self.report_to_api(m4b_file.parent, m4b_file)
             
             # Also look for folders containing m4b files
@@ -132,6 +137,122 @@ class TaggerService:
         except Exception as e:
             logger.error(f"Error scanning toTag directory: {e}")
             self.log_to_api("ERROR", f"Error scanning toTag directory: {e}")
+    
+    def auto_tag_if_asin_found(self, m4b_file: Path) -> bool:
+        """Try to auto-tag M4B file if ASIN is found in existing tags"""
+        try:
+            logger.info(f"🔍 Checking for ASIN in {m4b_file.name}...")
+            
+            # Import M4BTagger to extract ASIN
+            import sys
+            import os
+            
+            # Add current directory to path for imports
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            if current_dir not in sys.path:
+                sys.path.insert(0, current_dir)
+            
+            from m4b_tagger import M4BTagger
+            from audible_client import AudibleAPIClient
+            from pathlib import Path
+            
+            # Create tagger instance
+            library_dir = Path(os.getenv("LIBRARY_PATH", "/app/library"))
+            covers_dir = Path(os.getenv("COVERS_PATH", "/app/data/covers"))
+            
+            # Ensure covers directory exists
+            covers_dir.mkdir(parents=True, exist_ok=True)
+            
+            tagger = M4BTagger(library_dir, covers_dir)
+            
+            # Extract ASIN from file
+            asin = tagger.extract_asin_from_file(m4b_file)
+            
+            if not asin:
+                logger.info(f"❌ No ASIN found in {m4b_file.name}")
+                return False
+            
+            logger.info(f"✅ Found ASIN: {asin} in {m4b_file.name}")
+            
+            # Try to fetch metadata and tag automatically
+            try:
+                client = AudibleAPIClient()
+                details = client.get_book_details(asin, "fr")  # Default to French locale
+                
+                if not details:
+                    logger.warning(f"❌ Could not fetch metadata for ASIN: {asin}")
+                    return False
+                
+                logger.info(f"📚 Fetched metadata for: {getattr(details, 'title', 'Unknown')}")
+                
+                # Download cover if available
+                cover_path = None
+                if getattr(details, "product_images", None):
+                    cover_url = getattr(details.product_images, "image_1000", None) or getattr(details.product_images, "image_500", None)
+                    if cover_url:
+                        cover_path = client.download_cover(cover_url, asin, covers_dir)
+                
+                # Tag the file
+                if tagger.tag_file(m4b_file, details, cover_path):
+                    logger.info(f"✅ Successfully auto-tagged: {m4b_file.name}")
+                    self.log_to_api("INFO", f"Auto-tagged {m4b_file.name} with ASIN: {asin}")
+                    
+                    # Move to library
+                    final_path = tagger.move_to_library(m4b_file, details, cover_path)
+                    if final_path:
+                        logger.info(f"📁 Moved to library: {final_path}")
+                        self.log_to_api("INFO", f"Moved auto-tagged file to library: {final_path}")
+                        
+                        # Update tagging item to mark as auto-tagged
+                        self.update_tagging_item_auto_tagged(m4b_file, True)
+                        return True
+                    else:
+                        logger.error(f"❌ Failed to move to library: {m4b_file.name}")
+                        return False
+                else:
+                    logger.error(f"❌ Failed to tag file: {m4b_file.name}")
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"❌ Error during auto-tagging: {e}")
+                self.log_to_api("ERROR", f"Auto-tagging failed for {m4b_file.name}: {e}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error checking ASIN in {m4b_file.name}: {e}")
+            return False
+    
+    def update_tagging_item_auto_tagged(self, m4b_file: Path, auto_tagged: bool):
+        """Update the tagging item to mark it as auto-tagged"""
+        try:
+            import requests
+            
+            # Find the tagging item by path
+            response = requests.get(f"{self.api_url}/tagging")
+            if response.status_code == 200:
+                items = response.json()
+                for item in items:
+                    if item.get('path') == str(m4b_file):
+                        # Update the item to mark as auto-tagged
+                        update_data = {
+                            "name": item['name'],
+                            "path": item['path'],
+                            "folder": item.get('folder'),
+                            "status": "completed",  # Mark as completed since it was auto-tagged
+                            "size": item.get('size'),
+                            "auto_tagged": auto_tagged
+                        }
+                        
+                        # Create/update the tagging item
+                        update_response = requests.post(f"{self.api_url}/tagging/items", json=update_data)
+                        if update_response.status_code == 200:
+                            logger.info(f"✅ Updated tagging item for {m4b_file.name} as auto-tagged")
+                        else:
+                            logger.warning(f"⚠️ Failed to update tagging item for {m4b_file.name}")
+                        break
+                        
+        except Exception as e:
+            logger.error(f"❌ Error updating tagging item: {e}")
     
     def report_to_api(self, folder_path, specific_file=None, retries: int = 3):
         """Report new tagging item to API with retry logic"""

@@ -15,6 +15,14 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize database
+try:
+    from db_init.init_db import init_database
+    init_database()
+    logger.info("Database initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize database: {e}")
+
 app = FastAPI(
     title="Audiobook Pipeline API",
     description="Central API for RSS-to-Audiobook pipeline",
@@ -102,6 +110,7 @@ class TaggingItem(BaseModel):
     folder: Optional[str] = None
     status: str
     size: Optional[int] = None
+    auto_tagged: Optional[bool] = False
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -111,6 +120,7 @@ class TaggingItemCreate(BaseModel):
     folder: Optional[str] = None
     status: str = "waiting"
     size: Optional[int] = None
+    auto_tagged: Optional[bool] = False
 
 class AudibleSearchRequest(BaseModel):
     query: str
@@ -545,6 +555,7 @@ async def get_tagging_items():
                 folder=row[3],
                 status=row[4],
                 size=row[5],
+                auto_tagged=row[8] if len(row) > 8 else False,  # Handle existing records
                 created_at=row[6],
                 updated_at=row[7]
             ))
@@ -573,16 +584,16 @@ async def create_tagging_item(item: TaggingItemCreate):
             # Update existing item
             cursor.execute('''
                 UPDATE tagging_items 
-                SET name = ?, folder = ?, status = ?, size = ?, updated_at = CURRENT_TIMESTAMP
+                SET name = ?, folder = ?, status = ?, size = ?, auto_tagged = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE path = ?
-            ''', (item.name, item.folder, item.status, item.size, item.path))
+            ''', (item.name, item.folder, item.status, item.size, item.auto_tagged, item.path))
             item_id = existing[0]
         else:
             # Create new item
             cursor.execute('''
-                INSERT INTO tagging_items (name, path, folder, status, size)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (item.name, item.path, item.folder, item.status, item.size))
+                INSERT INTO tagging_items (name, path, folder, status, size, auto_tagged)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (item.name, item.path, item.folder, item.status, item.size, item.auto_tagged))
             item_id = cursor.lastrowid
         
         conn.commit()
@@ -600,6 +611,7 @@ async def create_tagging_item(item: TaggingItemCreate):
                 folder=row[3],
                 status=row[4],
                 size=row[5],
+                auto_tagged=row[8] if len(row) > 8 else False,  # Handle existing records
                 created_at=row[6],
                 updated_at=row[7]
             )
@@ -1526,6 +1538,63 @@ async def retag_m4b_file(request: RetagRequest):
         logger.error(f"Error retagging M4B file: {e}")
         log_to_db("ERROR", f"Error retagging M4B file: {e}")
         raise HTTPException(status_code=500, detail=f"Error retagging file: {str(e)}")
+
+@app.get("/m4b/tags")
+async def get_m4b_tags(file_path: str = Query(..., description="Path to M4B file")):
+    """Get M4B file tags using the print_m4b_tags script"""
+    try:
+        import subprocess
+        
+        # Map the file path to the container path
+        # If the path starts with /app/library, it's already correct
+        # If it starts with /Users/..., map it to /app/library
+        if file_path.startswith("/Users/"):
+            # Extract the relative path from the library directory
+            if "/data/library/" in file_path:
+                relative_path = file_path.split("/data/library/")[1]
+                mapped_path = f"/app/library/{relative_path}"
+            else:
+                mapped_path = file_path
+        elif file_path.startswith("/app/"):
+            mapped_path = file_path
+        else:
+            mapped_path = f"/app/library/{file_path}"
+        
+        logger.info(f"Original path: {file_path}")
+        logger.info(f"Mapped path: {mapped_path}")
+        
+        # Validate the file exists and is an M4B file
+        if not os.path.exists(mapped_path):
+            logger.error(f"File not found: {mapped_path}")
+            raise HTTPException(status_code=404, detail=f"File not found: {mapped_path}")
+        
+        if not mapped_path.lower().endswith('.m4b'):
+            raise HTTPException(status_code=400, detail="File is not an M4B file")
+        
+        # Run the print_m4b_tags script for this specific file
+        result = subprocess.run([
+            "python3", "/app/print_m4b_tags.py", mapped_path
+        ], capture_output=True, text=True, cwd="/app")
+        
+        if result.returncode != 0:
+            logger.error(f"Script error: {result.stderr}")
+            raise HTTPException(status_code=500, detail=f"Error reading M4B tags: {result.stderr}")
+        
+        # Log the output for debugging
+        logger.info(f"Script output length: {len(result.stdout)}")
+        logger.info(f"Script output preview: {result.stdout[:200]}...")
+        
+        # Return the output as plain text with no-cache headers
+        from fastapi.responses import PlainTextResponse
+        response = PlainTextResponse(content=result.stdout, media_type="text/plain")
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error getting M4B tags: {e}")
+        raise HTTPException(status_code=500, detail=f"Error reading M4B tags: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

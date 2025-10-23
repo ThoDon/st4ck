@@ -2,7 +2,7 @@ import React from "react";
 
 interface ActionButtonProps {
   icon: React.ReactNode;
-  onClick?: () => void;
+  onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
   disabled?: boolean;
   title?: string;
   className?: string;

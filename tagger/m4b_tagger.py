@@ -9,26 +9,20 @@ import shutil
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, List
 
 logger = logging.getLogger(__name__)
 
 # Import our Pydantic model
 try:
-    from .types import AudibleProduct  # type: ignore
+    from tagger_types import AudibleProduct  # type: ignore
     BookDataType = AudibleProduct
-    logger.info("Successfully imported AudibleProduct from .types")
+    logger.info("Successfully imported AudibleProduct from tagger_types")
 except Exception as e:
-    logger.warning(f"Failed to import AudibleProduct from .types: {e}")
-    try:
-        from types import AudibleProduct  # type: ignore
-        BookDataType = AudibleProduct
-        logger.info("Successfully imported AudibleProduct from types")
-    except Exception as e2:
-        logger.warning(f"Failed to import AudibleProduct from types: {e2}")
-        # If we can't import AudibleProduct, we'll use a different validation approach
-        AudibleProduct = None  # type: ignore
-        BookDataType = object  # Fallback type
+    logger.warning(f"Failed to import AudibleProduct from tagger_types: {e}")
+    # If we can't import AudibleProduct, we'll use a different validation approach
+    AudibleProduct = None  # type: ignore
+    BookDataType = object  # Fallback type
 from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm
 
 from constants import TagConstants
@@ -50,23 +44,12 @@ class M4BTagger:
             logger.info(f"Tagging file: {file_path}")
             logger.info(f"Book data: {book_data}")
             
-            # Validate that book_data conforms to AudibleProduct model (if available)
-            if AudibleProduct is not None:
-                if not isinstance(book_data, AudibleProduct):
-                    raise ValueError(f"book_data must be an instance of AudibleProduct, got {type(book_data)}")
-                
-                # Validate required fields
-                if not book_data.asin:
-                    raise ValueError("book_data.asin is required")
-                if not book_data.title:
-                    raise ValueError("book_data.title is required")
-            else:
-                logger.warning("AudibleProduct model not available - skipping validation")
-                # Basic validation for required attributes
-                if not hasattr(book_data, 'asin') or not book_data.asin:
-                    raise ValueError("book_data.asin is required")
-                if not hasattr(book_data, 'title') or not book_data.title:
-                    raise ValueError("book_data.title is required")
+            # Validate that book_data has required attributes (flexible type checking)
+            if not hasattr(book_data, 'asin') or not book_data.asin:
+                raise ValueError("book_data must have an 'asin' attribute")
+            
+            if not hasattr(book_data, 'title') or not book_data.title:
+                raise ValueError("book_data must have a 'title' attribute")
             
             # Load the M4B file
             audio = MP4(file_path)
@@ -99,6 +82,40 @@ class M4BTagger:
             logger.error(f"Full traceback: {traceback.format_exc()}")
             return False
     
+    def _is_translator_name(self, name: str) -> bool:
+        """Return True if the provided name likely denotes a translator/translation credit."""
+        lowered = (name or "").lower()
+        # French variants: traducteur / traductrice, and words containing "trad"
+        if "trad" in lowered:
+            return True
+        # English variant
+        if "translator" in lowered:
+            return True
+        return False
+
+    def _is_illustrator_name(self, name: str) -> bool:
+        """Return True if the provided name likely denotes an illustrator/illustration credit."""
+        lowered = (name or "").lower()
+        # French variants: illustrateur / illustratrice, and words containing "illustr"
+        if "illustr" in lowered:
+            return True
+        # English variant
+        if "illustrator" in lowered:
+            return True
+        return False
+
+    def _filter_authors(self, authors: List) -> List:
+        """Filter out translators and illustrators from author list"""
+        if not authors:
+            return []
+        
+        filtered_authors = []
+        for author in authors:
+            name = author.name if hasattr(author, 'name') else str(author)
+            if name and not self._is_translator_name(name) and not self._is_illustrator_name(name):
+                filtered_authors.append(author)
+        return filtered_authors
+
     def _set_basic_tags(self, audio: MP4, book_data: BookDataType):
         """Set basic M4B tags matching MP3Tag Audible API specification"""
         
@@ -106,14 +123,17 @@ class M4BTagger:
         if book_data.title:
             audio["\xa9alb"] = [book_data.title]
         
-        # ALBUMARTIST: Author (first author only)
-        if book_data.authors:
-            author_name = book_data.authors[0].name
+        # Filter out translators and illustrators from authors
+        filtered_authors = self._filter_authors(book_data.authors)
+        
+        # ALBUMARTIST: Author (first author only, excluding translators/illustrators)
+        if filtered_authors:
+            author_name = filtered_authors[0].name
             audio["aART"] = [author_name]
         
-        # ALBUMARTISTS: List of authors
-        if book_data.authors:
-            author_names = [author.name for author in book_data.authors]
+        # ALBUMARTISTS: List of authors (excluding translators/illustrators)
+        if filtered_authors:
+            author_names = [author.name for author in filtered_authors]
             album_artists_str = ", ".join(author_names)
             audio["----:com.apple.iTunes:ALBUMARTISTS"] = [MP4FreeForm(album_artists_str.encode("utf-8"))]
         
@@ -147,16 +167,10 @@ class M4BTagger:
                 album_sort = book_data.title
             audio["soal"] = [album_sort]
         
-        # ARTIST: Author, Narrator (combined)
-        artist_parts = []
-        if book_data.authors:
-            author_names = [author.name for author in book_data.authors]
-            artist_parts.extend(author_names)
-        if book_data.narrators:
-            narrator_names = [narrator.name for narrator in book_data.narrators]
-            artist_parts.extend(narrator_names)
-        if artist_parts:
-            audio["\xa9ART"] = [", ".join(artist_parts)]
+        # ARTIST: Same as ALBUMARTIST (first author only, excluding translators/illustrators)
+        if filtered_authors:
+            author_name = filtered_authors[0].name
+            audio["\xa9ART"] = [author_name]
         
         # YEAR: Audiobook Release Year
         if book_data.publication_datetime:
@@ -297,13 +311,14 @@ class M4BTagger:
             audio["\xa9pub"] = [book_data.publisher_name]
         
         # RATING WMP: Audible Rating (MP3)
-        if hasattr(book_data, 'rating') and book_data.rating:
-            rating_tag = MP4FreeForm(str(book_data.rating).encode("utf-8"))
+        merged_rating = self._extract_merged_rating(book_data)
+        if merged_rating is not None:
+            rating_tag = MP4FreeForm(str(merged_rating).encode("utf-8"))
             audio["----:com.apple.iTunes:RATING WMP"] = [rating_tag]
         
         # RATING: Audible Rating
-        if hasattr(book_data, 'rating') and book_data.rating:
-            rating_tag = MP4FreeForm(str(book_data.rating).encode("utf-8"))
+        if merged_rating is not None:
+            rating_tag = MP4FreeForm(str(merged_rating).encode("utf-8"))
             audio["----:com.apple.iTunes:RATING"] = [rating_tag]
         
         # RELEASETIME: Audiobook Release Date
@@ -408,23 +423,55 @@ class M4BTagger:
         
         return clean_text
     
+    def _extract_merged_rating(self, book_data: BookDataType) -> Optional[float]:
+        """Extract and merge rating from overall_distribution, performance_distribution, and story_distribution"""
+        import math
+        
+        if not hasattr(book_data, 'rating') or not book_data.rating:
+            return None
+        
+        ratings = []
+        
+        # Extract overall rating
+        if (hasattr(book_data.rating, 'overall_distribution') and 
+            book_data.rating.overall_distribution and 
+            hasattr(book_data.rating.overall_distribution, 'average_rating') and
+            book_data.rating.overall_distribution.average_rating is not None):
+            ratings.append(book_data.rating.overall_distribution.average_rating)
+        
+        # Extract performance rating
+        if (hasattr(book_data.rating, 'performance_distribution') and 
+            book_data.rating.performance_distribution and 
+            hasattr(book_data.rating.performance_distribution, 'average_rating') and
+            book_data.rating.performance_distribution.average_rating is not None):
+            ratings.append(book_data.rating.performance_distribution.average_rating)
+        
+        # Extract story rating
+        if (hasattr(book_data.rating, 'story_distribution') and 
+            book_data.rating.story_distribution and 
+            hasattr(book_data.rating.story_distribution, 'average_rating') and
+            book_data.rating.story_distribution.average_rating is not None):
+            ratings.append(book_data.rating.story_distribution.average_rating)
+        
+        # Return average of all available ratings, rounded to 2 decimal places, or None if no ratings found
+        if ratings:
+            average_rating = sum(ratings) / len(ratings)
+            return round(average_rating, 2)
+        return None
+    
     def move_to_library(self, file_path: Path, book_data: BookDataType, cover_path: Optional[str] = None) -> Optional[Path]:
         """Move tagged file to library with organized structure"""
         try:
-            # Validate that book_data conforms to AudibleProduct model (if available)
-            if AudibleProduct is not None:
-                if not isinstance(book_data, AudibleProduct):
-                    raise ValueError(f"book_data must be an instance of AudibleProduct, got {type(book_data)}")
-            else:
-                logger.warning("AudibleProduct model not available - skipping validation")
-                # Basic validation for required attributes
-                if not hasattr(book_data, 'asin') or not book_data.asin:
-                    raise ValueError("book_data.asin is required")
-                if not hasattr(book_data, 'title') or not book_data.title:
-                    raise ValueError("book_data.title is required")
+            # Validate that book_data has required attributes (flexible type checking)
+            if not hasattr(book_data, 'asin') or not book_data.asin:
+                raise ValueError("book_data must have an 'asin' attribute")
+            
+            if not hasattr(book_data, 'title') or not book_data.title:
+                raise ValueError("book_data must have a 'title' attribute")
             
             # Create organized directory structure
-            author_name = book_data.authors[0].name if book_data.authors else "Unknown Author"
+            filtered_authors = self._filter_authors(book_data.authors)
+            author_name = filtered_authors[0].name if filtered_authors else "Unknown Author"
             author = self._clean_filename(author_name)
             title = self._clean_filename(book_data.title)
             series = book_data.series[0].title if book_data.series else ""
@@ -496,7 +543,8 @@ class M4BTagger:
         try:
             logger.info(f"Creating OPF content for metadata: {metadata.title}")
             title = metadata.title
-            author_name = metadata.authors[0].name if metadata.authors else "Unknown Author"
+            filtered_authors = self._filter_authors(metadata.authors)
+            author_name = filtered_authors[0].name if filtered_authors else "Unknown Author"
             author = author_name
             description = (metadata.publisher_summary or 
                           metadata.extended_product_description or 
@@ -527,12 +575,11 @@ class M4BTagger:
             if hasattr(metadata, 'isbn') and metadata.isbn:
                 isbn = metadata.isbn
             
-            # Build multiple authors (excluding translators)
+            # Build multiple authors (excluding translators and illustrators)
             authors_xml = ""
-            if metadata.authors:
-                for author in metadata.authors:
-                    if not self._is_translator_name(author.name):
-                        authors_xml += f'        <dc:creator>{author.name}</dc:creator>\n'
+            if filtered_authors:
+                for author in filtered_authors:
+                    authors_xml += f'        <dc:creator>{author.name}</dc:creator>\n'
             
             # Build multiple narrators
             narrators_xml = ""
@@ -562,7 +609,7 @@ class M4BTagger:
         <dc:identifier opf:scheme="ASIN">{asin}</dc:identifier>
         <dc:identifier opf:scheme="ISBN">{isbn}</dc:identifier>
 {series_xml}        <meta property="duration">{metadata.runtime_length_min or "0"}</meta>
-        <meta property="rating">{metadata.rating.overall_distribution.average_rating if metadata.rating and metadata.rating.overall_distribution and metadata.rating.overall_distribution.average_rating else "0"}</meta>
+        <meta property="rating">{self._extract_merged_rating(metadata) or "0"}</meta>
     </metadata>
 <manifest>
     <item id="cover" href="cover.jpg" media-type="image/jpeg"/>
