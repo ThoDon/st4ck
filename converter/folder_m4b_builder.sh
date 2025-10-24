@@ -21,9 +21,9 @@ if [[ ! -d "$INPUT_DIR" ]]; then
     exit 1
 fi
 
-# Get list of MP3 files
+# Get list of MP3 files (recursively)
 FILES=()
-while IFS= read -r -d $'\0' f; do FILES+=("$f"); done < <(find "$INPUT_DIR" -maxdepth 1 -iname "*.mp3" -print0 | sort -z)
+while IFS= read -r -d $'\0' f; do FILES+=("$f"); done < <(find "$INPUT_DIR" -iname "*.mp3" -print0 | sort -z)
 
 if [[ ${#FILES[@]} -eq 0 ]]; then
     echo "⚠️  No MP3 files found — skipping."
