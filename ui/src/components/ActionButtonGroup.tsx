@@ -50,6 +50,7 @@ const getButtonClassName = (
     | "cancel"
     | "retry-cancel"
     | "trigger"
+    | "clear"
 ) => {
   switch (position) {
     case "first":
@@ -67,6 +68,8 @@ const getButtonClassName = (
     case "retry-cancel":
       return "rounded-sm";
     case "trigger":
+      return "rounded-sm";
+    case "clear":
       return "rounded-sm";
     default:
       return "rounded-sm";

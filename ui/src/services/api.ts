@@ -54,6 +54,16 @@ export const taggingService = {
     });
   },
 
+  async clearStuckTagging(itemId: number): Promise<{
+    message: string;
+    item_id: number;
+    item_name: string;
+    new_status: string;
+  }> {
+    const response = await api.post(`/tagging/items/${itemId}/clear`);
+    return response.data;
+  },
+
   async searchAudibleBooks(
     query: string,
     locale: string = "fr"
@@ -107,6 +117,16 @@ export const conversionService = {
 
   async cancelConversion(conversionId: number): Promise<void> {
     await api.post(`/conversions/${conversionId}/cancel`);
+  },
+
+  async clearStuckConversion(conversionId: number): Promise<{
+    message: string;
+    conversion_id: number;
+    book_name: string;
+    cleanup_details: string[];
+  }> {
+    const response = await api.post(`/conversions/${conversionId}/clear`);
+    return response.data;
   },
 };
 

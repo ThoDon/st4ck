@@ -655,6 +655,55 @@ async def update_tagging_item_status(item_id: int, status: str):
         log_to_db("ERROR", f"Error updating tagging item status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/tagging/items/{item_id}/clear")
+async def clear_stuck_tagging(item_id: int):
+    """Clear a stuck tagging item by resetting status to waiting"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get tagging item details
+        cursor.execute('SELECT * FROM tagging_items WHERE id = ?', (item_id,))
+        item = cursor.fetchone()
+        
+        if not item:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Tagging item not found")
+        
+        current_status = item[4]  # status is at index 4
+        item_name = item[1]  # name is at index 1
+        
+        # Only allow clearing if status is "processing"
+        if current_status != "processing":
+            conn.close()
+            raise HTTPException(status_code=400, detail=f"Cannot clear tagging item with status '{current_status}'. Only 'processing' items can be cleared.")
+        
+        # Reset status to waiting and clear message
+        cursor.execute('''
+            UPDATE tagging_items 
+            SET status = 'waiting', message = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (item_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        log_to_db("INFO", f"Cleared stuck tagging item {item_id}: {item_name}")
+        
+        return {
+            "message": f"Successfully cleared stuck tagging item '{item_name}'",
+            "item_id": item_id,
+            "item_name": item_name,
+            "new_status": "waiting"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing stuck tagging item: {e}")
+        log_to_db("ERROR", f"Error clearing stuck tagging item: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/tagging/status")
 async def get_tagging_status():
     """Get the status of the integrated tagging service"""
@@ -1093,6 +1142,92 @@ async def cancel_conversion(conversion_id: int):
     except Exception as e:
         logger.error(f"Error cancelling conversion: {e}")
         log_to_db("ERROR", f"Error cancelling conversion: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/conversions/{conversion_id}/clear")
+async def clear_stuck_conversion(conversion_id: int):
+    """Clear a stuck conversion by resetting status and cleaning up files"""
+    try:
+        import shutil
+        from pathlib import Path
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get conversion tracking details
+        cursor.execute('SELECT * FROM conversion_tracking WHERE id = ?', (conversion_id,))
+        tracking = cursor.fetchone()
+        
+        if not tracking:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Conversion tracking record not found")
+        
+        book_name = tracking[1]  # book_name is at index 1
+        current_status = tracking[5]  # status is at index 5
+        
+        # Only allow clearing if status is "converting" or "processing"
+        if current_status not in ["converting", "processing"]:
+            conn.close()
+            raise HTTPException(status_code=400, detail=f"Cannot clear conversion with status '{current_status}'. Only 'converting' or 'processing' conversions can be cleared.")
+        
+        cleanup_details = []
+        
+        # Reset conversion_tracking status to failed
+        cursor.execute('''
+            UPDATE conversion_tracking 
+            SET status = 'failed', updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (conversion_id,))
+        
+        # Reset conversion_jobs status to failed
+        cursor.execute('''
+            UPDATE conversion_jobs 
+            SET status = 'failed', updated_at = CURRENT_TIMESTAMP
+            WHERE book_name = ?
+        ''', (book_name,))
+        
+        # Clean up backup files
+        backup_path = tracking[8] if len(tracking) > 8 else None  # merge_folder_path
+        if backup_path and Path(backup_path).exists():
+            shutil.rmtree(backup_path)
+            cleanup_details.append(f"Removed backup: {backup_path}")
+        
+        # Clean up temporary files in /toMerge
+        tomerge_path = Path(f"/toMerge/{book_name}")
+        if tomerge_path.exists():
+            shutil.rmtree(tomerge_path)
+            cleanup_details.append(f"Removed temporary files: {tomerge_path}")
+        
+        # Clean up converted file if it exists
+        converted_file = Path(f"/converted/{book_name}.m4b")
+        if converted_file.exists():
+            converted_file.unlink()
+            cleanup_details.append(f"Removed converted file: {converted_file}")
+        
+        # Clean up backup path from rss_items table
+        cursor.execute('''
+            UPDATE rss_items 
+            SET conversion_backup_path = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE title = ?
+        ''', (book_name,))
+        
+        conn.commit()
+        conn.close()
+        
+        log_to_db("INFO", f"Cleared stuck conversion {conversion_id} for book: {book_name}")
+        
+        return {
+            "message": f"Successfully cleared stuck conversion for '{book_name}'",
+            "conversion_id": conversion_id,
+            "book_name": book_name,
+            "cleanup_details": cleanup_details
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing stuck conversion: {e}")
+        log_to_db("ERROR", f"Error clearing stuck conversion: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/conversions/jobs", response_model=List[ConversionJob])

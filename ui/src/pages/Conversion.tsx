@@ -7,6 +7,7 @@ import {
   RefreshCw,
   RotateCcw,
   X,
+  Trash2,
 } from "lucide-react";
 import React, { useState } from "react";
 import {
@@ -28,6 +29,15 @@ const Conversion: React.FC = () => {
   const [actionLoading, setActionLoading] = useState<{ [key: number]: string }>(
     {}
   );
+  const [clearConfirm, setClearConfirm] = useState<{
+    isOpen: boolean;
+    conversionId: number | null;
+    bookName: string;
+  }>({
+    isOpen: false,
+    conversionId: null,
+    bookName: "",
+  });
 
   const { data: conversions, isLoading, error, refetch } = useConversions();
 
@@ -72,6 +82,45 @@ const Conversion: React.FC = () => {
     } finally {
       setActionLoading((prev) => ({ ...prev, [conversionId]: "" }));
     }
+  };
+
+  const handleClearConversion = async (
+    conversionId: number,
+    bookName: string
+  ) => {
+    setClearConfirm({
+      isOpen: true,
+      conversionId,
+      bookName,
+    });
+  };
+
+  const confirmClearConversion = async () => {
+    if (!clearConfirm.conversionId) return;
+
+    setActionLoading((prev) => ({
+      ...prev,
+      [clearConfirm.conversionId!]: "clear",
+    }));
+    try {
+      const result = await conversionService.clearStuckConversion(
+        clearConfirm.conversionId
+      );
+      console.log("Clear result:", result);
+      await refetch();
+      setClearConfirm({ isOpen: false, conversionId: null, bookName: "" });
+    } catch (error) {
+      console.error("Failed to clear conversion:", error);
+    } finally {
+      setActionLoading((prev) => ({
+        ...prev,
+        [clearConfirm.conversionId!]: "",
+      }));
+    }
+  };
+
+  const cancelClearConversion = () => {
+    setClearConfirm({ isOpen: false, conversionId: null, bookName: "" });
   };
 
   const getStatusIcon = (status: string) => {
@@ -207,6 +256,9 @@ const Conversion: React.FC = () => {
         const canCancel =
           conversion.status === "converting" || conversion.status === "pending";
         const canTrigger = conversion.status === "pending";
+        const canClear =
+          conversion.status === "converting" ||
+          conversion.status === "processing";
 
         return (
           <ActionButtonGroup>
@@ -238,6 +290,23 @@ const Conversion: React.FC = () => {
                 disabled={!!isLoading}
                 title="Cancel conversion"
                 className={getButtonClassName("cancel")}
+              />
+            )}
+            {canClear && (
+              <ActionButton
+                icon={
+                  <Trash2
+                    className={`w-4 h-4 ${
+                      isLoading === "clear" ? "animate-pulse" : ""
+                    }`}
+                  />
+                }
+                onClick={() =>
+                  handleClearConversion(conversion.id, conversion.book_name)
+                }
+                disabled={!!isLoading}
+                title="Clear stuck conversion"
+                className={getButtonClassName("clear")}
               />
             )}
             {canTrigger && (
@@ -299,6 +368,45 @@ const Conversion: React.FC = () => {
         />
       ) : (
         <DataTable data={conversions} columns={conversionColumns} />
+      )}
+
+      {/* Clear Confirmation Dialog */}
+      {clearConfirm.isOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex items-center mb-4">
+              <Trash2 className="w-6 h-6 text-red-500 mr-3" />
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Clear Stuck Conversion
+              </h3>
+            </div>
+            <p className="text-gray-600 dark:text-gray-400 mb-6">
+              Are you sure you want to clear the stuck conversion for{" "}
+              <span className="font-medium text-gray-900 dark:text-white">
+                "{clearConfirm.bookName}"
+              </span>
+              ? This will reset the status to failed and clean up any associated
+              files and backups.
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={cancelClearConversion}
+                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmClearConversion}
+                disabled={actionLoading[clearConfirm.conversionId!] === "clear"}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {actionLoading[clearConfirm.conversionId!] === "clear"
+                  ? "Clearing..."
+                  : "Clear"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </PageContainer>
   );
